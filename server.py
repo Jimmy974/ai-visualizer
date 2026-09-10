@@ -31,6 +31,9 @@ Serves the face gallery at http://127.0.0.1:8790/ and exposes:
            faces, discovered by scanning the faces/ folder. Drop a new
            folder with an index.html into faces/ and it appears in the
            gallery. That is the whole plugin system.
+  /board-cards  version-1 Todo/Calendar snapshot published by
+           board_cards.py. Missing file: empty list. Invalid storage:
+           HTTP 503. Never served from the static root.
 
 READ-ONLY on the signal bus. The bus is three tiny files written by a
 voice line (backtalk writes them natively, github.com/jaredrhod/backtalk):
@@ -51,6 +54,8 @@ Run:
                                 the chosen state (idle|listening|thinking
                                 |speaking) so you can see a face perform
   python3 server.py --no-open   do not auto-open the browser
+  python3 server.py --cards-file /absolute/disposable/cards.json
+                                snapshot path; overrides board_cards_file
 Ctrl-C stops.
 """
 import json
@@ -65,6 +70,8 @@ import errno
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import board_cards
+
 HERE = Path(__file__).resolve().parent
 STATES = {"idle", "listening", "thinking", "speaking"}
 WAVEFORM_STALE_S = 0.6
@@ -76,6 +83,7 @@ DEFAULTS = {
     "port": 8790,
     "bus_dir": "",          # where the .voice_* files live ("" = here)
     "thinking_sound": True, # play assets/thinking.wav while thinking
+    "board_cards_file": "", # "" = ~/.local/share/ai-visualizer/board-cards.json
 }
 
 
@@ -107,6 +115,21 @@ PORT = int(CFG.get("port", 8790))
 if "--port" in sys.argv:
     i = sys.argv.index("--port")
     PORT = int(sys.argv[i + 1])
+
+
+def _flag_value(flag):
+    if flag in sys.argv:
+        i = sys.argv.index(flag)
+        if i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
+
+
+CARDS_PATH = board_cards.resolve_cards_path(
+    cli_path=_flag_value("--cards-file"),
+    config_path=CFG.get("board_cards_file") or None,
+    repo_root=HERE,
+)
 
 
 def list_faces():
@@ -242,6 +265,10 @@ class Handler(BaseHTTPRequestHandler):
                 # backtalk through <bus>/.mic_mode (ptt | open | wake).
                 self._send(json.dumps({"mode": _mic_read()}).encode(),
                            "application/json")
+            elif path == "/board-cards":
+                code, payload = board_cards.http_get_payload(CARDS_PATH)
+                self._send(json.dumps(payload).encode(),
+                           "application/json", code)
             else:
                 self._static(path)
         except ConnectionError:
@@ -292,6 +319,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    try:
+        board_cards.refuse_under_static_root(CARDS_PATH, HERE)
+    except board_cards.StaticRootError as e:
+        print(e, flush=True)
+        sys.exit(1)
     mode = f"MOCK={MOCK}" if MOCK else f"bus: {BUS}"
     root = f"http://127.0.0.1:{PORT}/"
     # The browser opens on the configured face; the gallery stays at "/" for switching.

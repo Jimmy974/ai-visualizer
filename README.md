@@ -76,6 +76,31 @@ Each face is a browser page, so OBS takes it as a browser source pointed at the 
 - The server binds to 127.0.0.1 only and serves nothing outside this folder. Change the port in the config if 8790 is taken.
 - An optional `.voice_alert` file in the bus folder (non-empty means alert) turns any face red until it's cleared. Nothing writes it by default.
 
+## Board info cards
+
+The board face can show Todo and Calendar cards from a local JSON snapshot. The visualizer does not talk to Google; an agent publishes the latest results, and the board reads them from `GET /board-cards` (`Cache-Control: no-store`). A missing file is an empty list. Corrupt storage returns HTTP 503.
+
+**Where the snapshot lives** (first match wins):
+
+1. `--cards-file <path>` on `server.py` or `board_cards.py`
+2. `board_cards_file` in `ai-visualizer.json`
+3. `~/.local/share/ai-visualizer/board-cards.json`
+
+`~` is expanded. Relative paths resolve against this folder. A path that resolves inside this folder (the static file root), including through a symlink, is refused with a nonzero exit so the snapshot can never be served as a static file.
+
+```
+python3 server.py --no-open --cards-file /absolute/disposable/cards.json
+python3 board_cards.py --cards-file /absolute/disposable/cards.json publish < update.json
+python3 board_cards.py --cards-file /absolute/disposable/cards.json clear --card todo
+python3 board_cards.py --cards-file /absolute/disposable/cards.json clear --card all
+```
+
+`publish` reads one card (`todo` or `calendar`) from stdin and merges it into the snapshot. `clear` removes saved board content only; it does not change Google.
+
+Writes take a sidecar lock file (`*.json.lock`) created with exclusive `O_CREAT|O_EXCL`. If another writer holds the lock for more than 5 seconds, the command fails without changing the snapshot. Locks are not stolen automatically after a crash. If a `.lock` file is left behind, confirm no publisher is running, then delete that lock file by hand to recover.
+
+On POSIX the snapshot and lock are created with owner-only permissions (`0600`). On Windows that restriction is best-effort and does not block publishing.
+
 ## Credits
 
 The VT323 typeface by Peter Hull, licensed under the SIL Open Font License 1.1 (see `assets/VT323-OFL.txt`). Everything else here is hand-rolled canvas code with zero dependencies.
