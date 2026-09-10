@@ -116,13 +116,17 @@ body.cine #board-cards {
 
 @media (max-width: 899px) {
   #board-cards {
+    top: 96px;
+    bottom: 80px;
+    left: 0;
+    right: 0;
     display: flex;
     flex-direction: column;
     align-items: stretch;
     overflow: auto;
     pointer-events: auto;
     cursor: default;
-    padding: 100px 16px 88px;
+    padding: 8px 16px 12px;
     gap: 12px;
   }
 

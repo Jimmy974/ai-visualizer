@@ -15,10 +15,12 @@ import json
 import re
 import sys
 
-MAX_TITLE_CHARS = 500
-MAX_ITEMS = 100
-MAX_ERROR_MESSAGE_CHARS = 200
-_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+import board_cards
+
+MAX_TITLE_CHARS = board_cards.MAX_TITLE_CHARS
+MAX_ITEMS = board_cards.MAX_ITEMS
+MAX_ERROR_MESSAGE_CHARS = board_cards.MAX_ERROR_MESSAGE_CHARS
+_DATE_RE = board_cards._DATE_RE
 _DUE_PREFIX = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 _KEYRING_RE = re.compile(r"^Using keyring backend:.*$", re.M)
 _SECRET_RE = re.compile(
@@ -71,6 +73,102 @@ def _add_days(ymd, days):
     return dt.isoformat()
 
 
+def validate_range_and_timezone(range_start, range_end, timezone):
+    try:
+        tz = board_cards.parse_timezone(timezone)
+        rng = board_cards.parse_range({"start": range_start, "end": range_end})
+    except board_cards.ValidationError as exc:
+        raise ValueError(str(exc))
+    return rng, tz
+
+
+def _tzinfo(name):
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:
+        return datetime.timezone.utc
+
+
+def _as_aware(now):
+    if now is None:
+        return datetime.datetime.now(datetime.timezone.utc)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=datetime.timezone.utc)
+    return now
+
+
+def item_has_ended(item, now, timezone):
+    local_now = _as_aware(now).astimezone(_tzinfo(timezone))
+    if item.get("allDay"):
+        end = datetime.date.fromisoformat(item["endDate"])
+        return local_now.date() >= end
+    end = board_cards.parse_rfc3339(item["end"])
+    return local_now >= end
+
+
+def range_for_item(item, timezone):
+    if item.get("allDay"):
+        return validate_range_and_timezone(
+            item["startDate"], item["endDate"], timezone
+        )[0]
+    tz = _tzinfo(timezone)
+    start = board_cards.parse_rfc3339(item["start"]).astimezone(tz).date()
+    end = board_cards.parse_rfc3339(item["end"]).astimezone(tz).date()
+    end_excl = end if end > start else start + datetime.timedelta(days=1)
+    return validate_range_and_timezone(
+        start.isoformat(), end_excl.isoformat(), timezone
+    )[0]
+
+
+def _overlaps_today_upcoming(item, now, timezone, today):
+    if item_has_ended(item, now, timezone):
+        return False
+    tomorrow = _add_days(today, 1)
+    if item.get("allDay"):
+        return item["startDate"] < tomorrow and item["endDate"] > today
+    start = board_cards.parse_rfc3339(item["start"]).astimezone(_tzinfo(timezone))
+    tomorrow_dt = datetime.datetime.combine(
+        datetime.date.fromisoformat(tomorrow),
+        datetime.time.min,
+        tzinfo=_tzinfo(timezone),
+    )
+    return start < tomorrow_dt
+
+
+def select_calendar_scope(
+    items,
+    timezone,
+    now=None,
+    today=None,
+    explicit_start=None,
+    explicit_end=None,
+):
+    if explicit_start and explicit_end:
+        rng, _tz = validate_range_and_timezone(
+            explicit_start, explicit_end, timezone
+        )
+        return list(items), rng
+    today = today or _as_aware(now).astimezone(_tzinfo(timezone)).date().isoformat()
+    upcoming_today = [
+        item for item in items
+        if _overlaps_today_upcoming(item, now, timezone, today)
+    ]
+    if upcoming_today:
+        upcoming_today.sort(key=_item_sort_key)
+        rng, _tz = validate_range_and_timezone(
+            today, _add_days(today, 1), timezone
+        )
+        return upcoming_today, rng
+    rest = [item for item in items if not item_has_ended(item, now, timezone)]
+    rest.sort(key=_item_sort_key)
+    if rest:
+        nxt = rest[0]
+        return [nxt], range_for_item(nxt, timezone)
+    rng, _tz = validate_range_and_timezone(today, _add_days(today, 1), timezone)
+    return [], rng
+
+
 def calendar_window(
     today,
     timezone,
@@ -79,24 +177,19 @@ def calendar_window(
     explicit_start=None,
     explicit_end=None,
 ):
-    tz = (timezone or "").strip()
-    if not tz:
-        raise ValueError("timezone must be a non-empty IANA name")
     if explicit_start and explicit_end:
-        if not _DATE_RE.fullmatch(explicit_start) or not _DATE_RE.fullmatch(explicit_end):
-            raise ValueError("explicit range must be YYYY-MM-DD")
-        if explicit_end <= explicit_start:
-            raise ValueError("range end must be exclusive and later than start")
-        return {"start": explicit_start, "end": explicit_end}
-    if today_count > 0:
-        return {"start": today, "end": _add_days(today, 1)}
-    if fallback_count > 0:
-        return {"start": today, "end": _add_days(today, 30)}
-    return {"start": today, "end": _add_days(today, 1)}
+        rng, _tz = validate_range_and_timezone(
+            explicit_start, explicit_end, timezone
+        )
+        return rng
+    rng, _tz = validate_range_and_timezone(
+        today, _add_days(today, 1), timezone
+    )
+    return rng
 
 
 def loading_update(card_id, attempted_at=None):
-    if card_id not in ("todo", "calendar"):
+    if card_id not in board_cards.CARD_IDS:
         raise ValueError("card must be todo or calendar")
     return {
         "id": card_id,
@@ -106,15 +199,14 @@ def loading_update(card_id, attempted_at=None):
 
 
 def error_update(card_id, attempted_at, message):
-    if card_id not in ("todo", "calendar"):
+    if card_id not in board_cards.CARD_IDS:
         raise ValueError("card must be todo or calendar")
     text = message if isinstance(message, str) else "Google request failed"
     text = _SECRET_RE.sub("[redacted]", text)
-    text = " ".join(text.split())
-    if not text:
+    try:
+        text = board_cards.sanitize_message(text)
+    except board_cards.ValidationError:
         text = "Google request failed"
-    if len(text) > MAX_ERROR_MESSAGE_CHARS:
-        text = text[:MAX_ERROR_MESSAGE_CHARS].rstrip()
     return {
         "id": card_id,
         "status": "error",
@@ -248,6 +340,23 @@ def _item_sort_key(item):
     return (item["start"][:10], 1, item["start"])
 
 
+def calendar_card(items, range_start, range_end, timezone, attempted_at=None):
+    rng, tz = validate_range_and_timezone(range_start, range_end, timezone)
+    attempted_at = attempted_at or _now_rfc3339()
+    out = list(items)
+    out.sort(key=_item_sort_key)
+    return {
+        "id": "calendar",
+        "status": "ready",
+        "attemptedAt": attempted_at,
+        "updatedAt": attempted_at,
+        "timezone": tz,
+        "range": rng,
+        "items": out[:MAX_ITEMS],
+        "totalCount": len(out),
+    }
+
+
 def normalize_events(
     payload,
     range_start,
@@ -255,14 +364,6 @@ def normalize_events(
     timezone,
     attempted_at=None,
 ):
-    tz = (timezone or "").strip()
-    if not tz:
-        raise ValueError("timezone must be a non-empty IANA name")
-    if not _DATE_RE.fullmatch(range_start) or not _DATE_RE.fullmatch(range_end):
-        raise ValueError("range must be YYYY-MM-DD")
-    if range_end <= range_start:
-        raise ValueError("range end must be exclusive and later than start")
-    attempted_at = attempted_at or _now_rfc3339()
     items = []
     seen = set()
     for event in _collect_events(payload):
@@ -271,18 +372,9 @@ def normalize_events(
             continue
         seen.add(item["id"])
         items.append(item)
-    items.sort(key=_item_sort_key)
-    total = len(items)
-    return {
-        "id": "calendar",
-        "status": "ready",
-        "attemptedAt": attempted_at,
-        "updatedAt": attempted_at,
-        "timezone": tz,
-        "range": {"start": range_start, "end": range_end},
-        "items": items[:MAX_ITEMS],
-        "totalCount": total,
-    }
+    return calendar_card(
+        items, range_start, range_end, timezone, attempted_at
+    )
 
 
 def _dump(card):
@@ -306,8 +398,11 @@ def main(argv=None):
     ev_p = sub.add_parser("events")
     ev_p.add_argument("--attempted-at")
     ev_p.add_argument("--timezone", required=True)
-    ev_p.add_argument("--range-start", required=True)
-    ev_p.add_argument("--range-end", required=True)
+    ev_p.add_argument("--range-start")
+    ev_p.add_argument("--range-end")
+    ev_p.add_argument("--auto-scope", action="store_true")
+    ev_p.add_argument("--now")
+    ev_p.add_argument("--today")
     args = parser.parse_args(argv)
     try:
         if args.command == "loading":
@@ -319,15 +414,40 @@ def main(argv=None):
             if args.command == "tasks":
                 card = normalize_tasks(payload, args.attempted_at)
             else:
-                card = normalize_events(
-                    payload,
-                    args.range_start,
-                    args.range_end,
-                    args.timezone,
-                    args.attempted_at,
-                )
+                if args.auto_scope:
+                    prepared = []
+                    for event in _collect_events(payload):
+                        item = _event_item(event)
+                        if item is not None:
+                            prepared.append(item)
+                    now = board_cards.parse_rfc3339(args.now) if args.now else None
+                    selected, rng = select_calendar_scope(
+                        prepared,
+                        args.timezone,
+                        now=now,
+                        today=args.today,
+                    )
+                    card = calendar_card(
+                        selected,
+                        rng["start"],
+                        rng["end"],
+                        args.timezone,
+                        args.attempted_at,
+                    )
+                elif not args.range_start or not args.range_end:
+                    raise ValueError(
+                        "events requires --range-start and --range-end, or --auto-scope"
+                    )
+                else:
+                    card = normalize_events(
+                        payload,
+                        args.range_start,
+                        args.range_end,
+                        args.timezone,
+                        args.attempted_at,
+                    )
         sys.stdout.write(_dump(card) + "\n")
-    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+    except (ValueError, KeyError, json.JSONDecodeError, board_cards.ValidationError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     return 0

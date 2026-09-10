@@ -111,7 +111,10 @@ Promise.resolve()
   const snap = BC.snapshotView({version:1, cards:[]}, {});
   assert(snap.todo.mode === "invitation", "todo invite");
   assert(snap.calendar.mode === "invitation", "cal invite");
-  assert(/Sinner/i.test(snap.todo.statusText), "invite text");
+  assert(snap.todo.statusText.indexOf("JARVIS") !== -1, "default name");
+  assert(snap.todo.statusText.indexOf("Sinner") === -1, "no hard-coded Sinner");
+  const named = BC.snapshotView({version:1, cards:[]}, {agentName:"Orion"});
+  assert(named.todo.statusText.indexOf("Orion") !== -1, "configured name");
   assert(snap.todo.items.length === 0, "no fake todo");
   assert(snap.calendar.items.length === 0, "no fake cal");
   assert(!snap.calendar.rangeLabel, "no invented range");
@@ -275,6 +278,8 @@ class TestBoardMarkup(unittest.TestCase):
             self.assertIn('id="%s"' % heading, html)
         self.assertIn("shouldIgnoreGlobalKeys", html)
         self.assertIn("BoardCards", html)
+        self.assertNotIn("Sinner", html)
+        self.assertNotIn("Sinner", CARDS_JS.read_text())
 
     def test_css_covers_focus_cursor_cine_and_narrow_stack(self):
         css = CARDS_CSS.read_text()
@@ -283,6 +288,11 @@ class TestBoardMarkup(unittest.TestCase):
         self.assertIn("cine", css)
         self.assertIn("@media", css)
         self.assertIn("overflow", css)
+        media = css.split("@media")[-1]
+        self.assertIn("max-width", media)
+        self.assertRegex(media, r"top\s*:\s*\d+px")
+        self.assertNotIn("inset: 0", media)
+        self.assertNotIn("inset:0", media)
 
 
 @unittest.skipUnless(NODE, "node is required to execute cards.js tests")

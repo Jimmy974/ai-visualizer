@@ -196,13 +196,59 @@ class TestGwsCalendar(unittest.TestCase):
             fallback_count=0,
         )
         self.assertEqual(today, {"start": "2026-09-10", "end": "2026-09-11"})
-        empty_today = gws_cards.calendar_window(
-            today="2026-09-10",
+        ended = {
+            "id": "ended",
+            "title": "Morning",
+            "allDay": False,
+            "start": "2026-09-10T11:00:00+01:00",
+            "end": "2026-09-10T12:15:00+01:00",
+        }
+        later = {
+            "id": "later",
+            "title": "Evening",
+            "allDay": False,
+            "start": "2026-09-10T20:00:00+01:00",
+            "end": "2026-09-10T21:00:00+01:00",
+        }
+        allday = {
+            "id": "all",
+            "title": "All day",
+            "allDay": True,
+            "startDate": "2026-09-10",
+            "endDate": "2026-09-11",
+        }
+        next_week = {
+            "id": "next",
+            "title": "Next",
+            "allDay": True,
+            "startDate": "2026-09-25",
+            "endDate": "2026-09-26",
+        }
+        even_later = {
+            "id": "later2",
+            "title": "Later still",
+            "allDay": False,
+            "start": "2026-09-26T09:00:00+01:00",
+            "end": "2026-09-26T10:00:00+01:00",
+        }
+        now = board_cards.parse_rfc3339("2026-09-10T18:00:00+01:00")
+        selected, rng = gws_cards.select_calendar_scope(
+            [ended, later, allday],
             timezone="Europe/London",
-            today_count=0,
-            fallback_count=5,
+            now=now,
+            today="2026-09-10",
         )
-        self.assertEqual(empty_today, {"start": "2026-09-10", "end": "2026-10-10"})
+        self.assertEqual(rng, {"start": "2026-09-10", "end": "2026-09-11"})
+        self.assertEqual({i["id"] for i in selected}, {"later", "all"})
+        self.assertNotIn("ended", {i["id"] for i in selected})
+        fb_items, fb_rng = gws_cards.select_calendar_scope(
+            [ended, next_week, even_later],
+            timezone="Europe/London",
+            now=now,
+            today="2026-09-10",
+        )
+        self.assertEqual([i["id"] for i in fb_items], ["next"])
+        self.assertEqual(fb_rng, {"start": "2026-09-25", "end": "2026-09-26"})
         explicit = gws_cards.calendar_window(
             today="2026-09-10",
             timezone="Europe/London",
@@ -318,8 +364,57 @@ class TestLoadingErrorAndCli(unittest.TestCase):
         self.assertIn(" publish", handoff)
         self.assertIn("clear --card", handoff)
         self.assertIn("load", handoff.lower())
+        self.assertIn("ongoing", handoff.lower())
+        self.assertIn("next event", handoff.lower())
         self.assertIn("docs/agents/board-info-cards.md", readme)
         self.assertIn("--cards-file", readme)
+
+    def test_auto_scope_cli_drops_ended_and_picks_next(self):
+        payload = {
+            "items": [
+                {
+                    "id": "ended",
+                    "status": "confirmed",
+                    "summary": "Morning",
+                    "start": {"dateTime": "2026-09-10T11:00:00+01:00", "timeZone": "Europe/London"},
+                    "end": {"dateTime": "2026-09-10T12:15:00+01:00", "timeZone": "Europe/London"},
+                },
+                {
+                    "id": "next",
+                    "status": "confirmed",
+                    "summary": "Next",
+                    "start": {"date": "2026-09-25"},
+                    "end": {"date": "2026-09-26"},
+                },
+                {
+                    "id": "later2",
+                    "status": "confirmed",
+                    "summary": "Later still",
+                    "start": {"dateTime": "2026-09-26T09:00:00+01:00", "timeZone": "Europe/London"},
+                    "end": {"dateTime": "2026-09-26T10:00:00+01:00", "timeZone": "Europe/London"},
+                },
+            ]
+        }
+        proc = _run(
+            "events",
+            "--timezone", "Europe/London",
+            "--auto-scope",
+            "--now", "2026-09-10T18:00:00+01:00",
+            "--today", "2026-09-10",
+            stdin=json.dumps(payload),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        card = json.loads(proc.stdout)
+        self.assertEqual([i["id"] for i in card["items"]], ["next"])
+        self.assertEqual(card["range"], {"start": "2026-09-25", "end": "2026-09-26"})
+        self.assertEqual(card["totalCount"], 1)
+
+    def test_limits_imported_from_board_cards(self):
+        self.assertEqual(gws_cards.MAX_ITEMS, board_cards.MAX_ITEMS)
+        self.assertEqual(gws_cards.MAX_TITLE_CHARS, board_cards.MAX_TITLE_CHARS)
+        src = (REPO / "gws_cards.py").read_text()
+        self.assertNotIn("MAX_ITEMS = 100", src)
+        self.assertNotIn("_DATE_RE = re.compile", src)
 
 
 if __name__ == "__main__":

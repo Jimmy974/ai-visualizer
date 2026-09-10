@@ -343,6 +343,22 @@ class TestPublishMerge(CardsTemp):
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(self.path.read_bytes(), before)
 
+        unsupported = {
+            "version": 99,
+            "id": "todo",
+            "status": "loading",
+            "attemptedAt": "2026-03-29T13:00:00Z",
+        }
+        with self.assertRaises(board_cards.ValidationError):
+            self.publish(unsupported)
+        self.assertEqual(self.path.read_bytes(), before)
+        proc = _run_cli(
+            ["--cards-file", str(self.path), "publish"],
+            stdin=json.dumps(unsupported),
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.path.read_bytes(), before)
+
         self.path.write_bytes(before)
         self.path.write_text('{"version": 2, "cards": []}')
         corrupt = self.path.read_bytes()

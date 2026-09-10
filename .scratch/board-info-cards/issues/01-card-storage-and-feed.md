@@ -28,3 +28,5 @@ Round 3: durable local publication follows the repo's file-backed bus convention
 Spec review round 1: addressed findings 1, 2, 4, 5 and 12; consume early discovery from 03 (finding 7). Status remains user-approved `ready-for-agent`; see spec Review Log finding 6.
 
 Ticket 03's discovery checkbox is still open and this worktree has no Google skill identity, invocation, or redacted output samples. 01 implements the spec's version-1 card schema rather than assumed upstream Google shapes.
+
+Historical: 01 was implemented and resolved before ticket 03 recorded discovery evidence. The storage contract did not depend on upstream Google shapes.

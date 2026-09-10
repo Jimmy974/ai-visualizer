@@ -297,6 +297,8 @@ def _parse_total_count(value, n_items):
 def validate_update(payload):
     if not isinstance(payload, dict):
         raise ValidationError("card update must be a JSON object")
+    if "version" in payload and payload.get("version") != VERSION:
+        raise ValidationError("unsupported snapshot version")
     card_id = payload.get("id")
     if card_id not in CARD_IDS:
         raise ValidationError("id must be todo or calendar")

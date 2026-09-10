@@ -20,6 +20,7 @@
     TODO_LIMIT: TODO_LIMIT,
     CAL_LIMIT: CAL_LIMIT,
     POLL_MS: POLL_MS,
+    agentName: "JARVIS",
   };
 
   function pad2(n) {
@@ -102,9 +103,10 @@
       if (opts.connectionError) {
         return emptyPanel(id, "unavailable", "Board cards unavailable.");
       }
+      const name = (opts.agentName || BoardCards.agentName || "JARVIS");
       const invite = id === "calendar"
-        ? "Ask Sinner for your calendar."
-        : "Ask Sinner for your tasks.";
+        ? "Ask " + name + " for your calendar."
+        : "Ask " + name + " for your tasks.";
       return emptyPanel(id, "invitation", invite);
     }
     const items = Array.isArray(card.items) ? card.items : [];
@@ -306,6 +308,12 @@
     }
   }
 
+  function viewOpts(extra) {
+    extra = extra || {};
+    extra.agentName = BoardCards.agentName || "JARVIS";
+    return extra;
+  }
+
   function startLive() {
     let lastGood = { version: 1, cards: [] };
     const poller = createPoller({
@@ -328,10 +336,10 @@
       },
       onPayload: function (body) {
         lastGood = body;
-        paint(snapshotView(body, {}));
+        paint(snapshotView(body, viewOpts()));
       },
       onConnectionError: function () {
-        paint(snapshotView(lastGood, { connectionError: true }));
+        paint(snapshotView(lastGood, viewOpts({ connectionError: true })));
       },
     });
     document.addEventListener("visibilitychange", function () {
@@ -340,10 +348,31 @@
     poller.start();
   }
 
+  function applyAgentName(name) {
+    const trimmed = String(name || "").trim();
+    if (trimmed) BoardCards.agentName = trimmed;
+  }
+
   function init() {
     const root = document.getElementById("board-cards");
     if (!root) return;
-    paint(snapshotView({ version: 1, cards: [] }, {}));
+    paint(snapshotView({ version: 1, cards: [] }, viewOpts()));
+    if (typeof AV !== "undefined" && AV.ready) {
+      AV.ready(function (a) {
+        applyAgentName(a && a.name);
+        ["todo", "calendar"].forEach(function (id) {
+          const el = document.getElementById("card-" + id);
+          if (el && el.dataset.mode === "invitation") {
+            const status = el.querySelector("[data-role=status]");
+            if (status) {
+              status.textContent = id === "calendar"
+                ? "Ask " + BoardCards.agentName + " for your calendar."
+                : "Ask " + BoardCards.agentName + " for your tasks.";
+            }
+          }
+        });
+      });
+    }
     if (typeof MutationObserver === "function") {
       const obs = new MutationObserver(function () { syncCine(root); });
       obs.observe(document.body, { attributes: true, attributeFilter: ["class"] });
