@@ -79,6 +79,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   #vig{position:fixed;inset:0;pointer-events:none;z-index:8;
        background:radial-gradient(ellipse at 50% 50%,transparent 52%,rgba(0,0,0,.6) 100%)}
 </style>
+<link rel="stylesheet" href="cards.css">
 </head>
 <body>
 <canvas id="stage"></canvas>
@@ -105,7 +106,23 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   <div id="hint"><span class="idlehint">SPACE - CINEMATIC FLYTHROUGH</span><span class="proc">PROCESSING...</span></div>
 </div>
 
+<div id="board-cards">
+  <section id="card-todo" class="board-card" role="region" tabindex="0" aria-labelledby="card-todo-heading">
+    <h2 id="card-todo-heading">Todo</h2>
+    <p class="board-card-status" data-role="status">Ask JARVIS for your tasks.</p>
+    <ul class="board-card-list" data-role="list"></ul>
+    <p class="board-card-meta" data-role="meta"></p>
+  </section>
+  <section id="card-calendar" class="board-card" role="region" tabindex="0" aria-labelledby="card-calendar-heading">
+    <h2 id="card-calendar-heading">Calendar</h2>
+    <p class="board-card-status" data-role="status">Ask JARVIS for your calendar.</p>
+    <ul class="board-card-list" data-role="list"></ul>
+    <p class="board-card-meta" data-role="meta"></p>
+  </section>
+</div>
+
 <script src="../../core.js"></script>
+<script src="cards.js"></script>
 <script>
 "use strict";
 /* ============================================================
@@ -1056,6 +1073,7 @@ function fpsToggle(on){
 if(Q.get("fps")==="1")fpsToggle(true);
 
 addEventListener("keydown",e=>{
+  if(window.BoardCards&&BoardCards.shouldIgnoreGlobalKeys(e.target))return;
   if(e.code==="Space"){e.preventDefault();cine?endCine():startCine();}
   if(e.key==="c"||e.key==="C"){cine?endCine():startCine();}
   if(e.key==="f"||e.key==="F"){
