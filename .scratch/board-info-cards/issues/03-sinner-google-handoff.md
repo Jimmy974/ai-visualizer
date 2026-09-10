@@ -15,7 +15,7 @@ Files: create `docs/agents/board-info-cards.md` with the Sinner handoff instruct
 - [x] Normalize incomplete tasks and timed/all-day events to the spec using the verified upstream shapes. Calendar success includes `range: {start, end}` in `YYYY-MM-DD` with exclusive end and the viewer's IANA `timezone`. Honor explicit dates; otherwise use today's ongoing/upcoming events and the labelled 30-day fallback. Resolve viewer timezone before date-dependent retrieval. Loading/error updates must not replace the previous successful scope.
 - [x] Document and exercise explicit board-only clear commands. Keep Google writes outside this workflow.
 - [x] Verify normalization with representative redacted skill output: date-only tasks, all-day events, offset timestamps, multiple lists/calendars, no results and one-source failure. Confirm totals describe the fetched scope.
-- [x] Explicitly load the handoff document into Sinner with the QA `--cards-file` override. Run a live request for both tasks and calendar, then a single-source refresh, reload/server restart and explicit board clear. Record invocation and pass/fail results without private task/event contents in repo documentation.
+- [ ] Explicitly load the handoff document into Sinner with the QA `--cards-file` override. Run a live request for both tasks and calendar, then a single-source refresh, reload/server restart and explicit board clear. Record invocation and pass/fail results without private task/event contents in repo documentation. **Waived by user** (nested Sinner QA). This box does not claim a Sinner-session run.
 
 Acceptance: actual skill results appear in the board; failures preserve prior data correctly; local persistence and clear work end to end. Fixture-only checks do not satisfy the live acceptance criterion.
 
@@ -24,6 +24,8 @@ If the installed skill cannot be located or accessed, record the concrete integr
 ## Comments
 
 Round 3: user accepted reuse of the existing Google skill. Its exact identity remains an implementation discovery, not an unresolved product decision.
+
+Round-2 review: the Sinner-session checkbox is unticked and **waived by user**. Nested Sinner QA is not claimed. The gws live check in Comments stands.
 
 Spec review round 1: discovery now runs first through an explicit dependency exception (7); the loaded repository document is the precise Sinner handoff artifact (8). Producer fields and isolated QA overrides match 01/02 (1, 2). Status remains user-approved (6).
 
@@ -54,7 +56,7 @@ All-day: `start: {"date":"2026-09-25"}`, `end: {"date":"2026-09-26"}` (exclusive
 
 ### Live board check (this session, disposable `--cards-file`)
 
-Not a nested Sinner Claude chat; same `gws` grant Sinner uses. Handoff to load in Sinner: `docs/agents/board-info-cards.md`.
+Nested Sinner-session QA is **waived by user**. The gws live check below used Sinner's existing grant from this worktree, not a Sinner chat. Handoff document: `docs/agents/board-info-cards.md`.
 
 - Loading publishes omitted items/range. Pass.
 - Live tasks+calendar publish: GET `/board-cards` 200 `no-store`; todo ready 8 items; calendar ready 1 timed event, range `2026-09-10`→`2026-09-11`, timezone `Europe/London`. Pass.

@@ -107,18 +107,17 @@ def item_has_ended(item, now, timezone):
     return local_now >= end
 
 
-def range_for_item(item, timezone):
-    if item.get("allDay"):
-        return validate_range_and_timezone(
-            item["startDate"], item["endDate"], timezone
-        )[0]
+def _event_start_instant(item, timezone):
     tz = _tzinfo(timezone)
-    start = board_cards.parse_rfc3339(item["start"]).astimezone(tz).date()
-    end = board_cards.parse_rfc3339(item["end"]).astimezone(tz).date()
-    end_excl = end if end > start else start + datetime.timedelta(days=1)
-    return validate_range_and_timezone(
-        start.isoformat(), end_excl.isoformat(), timezone
-    )[0]
+    if item.get("allDay"):
+        day = datetime.date.fromisoformat(item["startDate"])
+        return datetime.datetime.combine(day, datetime.time.min, tzinfo=tz)
+    return board_cards.parse_rfc3339(item["start"]).astimezone(tz)
+
+
+def _item_sort_key(item, timezone):
+    all_day = 0 if item.get("allDay") else 1
+    return (_event_start_instant(item, timezone), all_day)
 
 
 def _overlaps_today_upcoming(item, now, timezone, today):
@@ -155,37 +154,20 @@ def select_calendar_scope(
         if _overlaps_today_upcoming(item, now, timezone, today)
     ]
     if upcoming_today:
-        upcoming_today.sort(key=_item_sort_key)
+        upcoming_today.sort(key=lambda item: _item_sort_key(item, timezone))
         rng, _tz = validate_range_and_timezone(
             today, _add_days(today, 1), timezone
         )
         return upcoming_today, rng
     rest = [item for item in items if not item_has_ended(item, now, timezone)]
-    rest.sort(key=_item_sort_key)
+    rest.sort(key=lambda item: _item_sort_key(item, timezone))
     if rest:
-        nxt = rest[0]
-        return [nxt], range_for_item(nxt, timezone)
+        rng, _tz = validate_range_and_timezone(
+            today, _add_days(today, 30), timezone
+        )
+        return [rest[0]], rng
     rng, _tz = validate_range_and_timezone(today, _add_days(today, 1), timezone)
     return [], rng
-
-
-def calendar_window(
-    today,
-    timezone,
-    today_count=0,
-    fallback_count=0,
-    explicit_start=None,
-    explicit_end=None,
-):
-    if explicit_start and explicit_end:
-        rng, _tz = validate_range_and_timezone(
-            explicit_start, explicit_end, timezone
-        )
-        return rng
-    rng, _tz = validate_range_and_timezone(
-        today, _add_days(today, 1), timezone
-    )
-    return rng
 
 
 def loading_update(card_id, attempted_at=None):
@@ -334,17 +316,11 @@ def _event_item(event):
     }
 
 
-def _item_sort_key(item):
-    if item["allDay"]:
-        return (item["startDate"], 0, "")
-    return (item["start"][:10], 1, item["start"])
-
-
 def calendar_card(items, range_start, range_end, timezone, attempted_at=None):
     rng, tz = validate_range_and_timezone(range_start, range_end, timezone)
     attempted_at = attempted_at or _now_rfc3339()
     out = list(items)
-    out.sort(key=_item_sort_key)
+    out.sort(key=lambda item: _item_sort_key(item, timezone))
     return {
         "id": "calendar",
         "status": "ready",
@@ -357,13 +333,7 @@ def calendar_card(items, range_start, range_end, timezone, attempted_at=None):
     }
 
 
-def normalize_events(
-    payload,
-    range_start,
-    range_end,
-    timezone,
-    attempted_at=None,
-):
+def collect_event_items(payload):
     items = []
     seen = set()
     for event in _collect_events(payload):
@@ -372,8 +342,18 @@ def normalize_events(
             continue
         seen.add(item["id"])
         items.append(item)
+    return items
+
+
+def normalize_events(
+    payload,
+    range_start,
+    range_end,
+    timezone,
+    attempted_at=None,
+):
     return calendar_card(
-        items, range_start, range_end, timezone, attempted_at
+        collect_event_items(payload), range_start, range_end, timezone, attempted_at
     )
 
 
@@ -415,14 +395,9 @@ def main(argv=None):
                 card = normalize_tasks(payload, args.attempted_at)
             else:
                 if args.auto_scope:
-                    prepared = []
-                    for event in _collect_events(payload):
-                        item = _event_item(event)
-                        if item is not None:
-                            prepared.append(item)
                     now = board_cards.parse_rfc3339(args.now) if args.now else None
                     selected, rng = select_calendar_scope(
-                        prepared,
+                        collect_event_items(payload),
                         args.timezone,
                         now=now,
                         today=args.today,

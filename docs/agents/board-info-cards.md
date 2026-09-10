@@ -94,7 +94,7 @@ A list with no open tasks is a successful empty card (`items: []`, `totalCount: 
 Default window, after timezone is known:
 
 1. Today in the viewer timezone: fetch `[today, tomorrow)` then keep only **ongoing/upcoming** events (drop anything whose end is already past `now`). Label `range` as today → tomorrow (exclusive).
-2. If none remain, query the next 30 days and publish **only the single next event**. Label `range` as that event's dates (all-day `startDate`→`endDate`, or the timed event's local start date through an exclusive end later than start).
+2. If none remain, query the next 30 days and publish **only the single next event**. Label `range` as that 30-day window (`today` → `today+30`, exclusive end), not as the event's own day.
 3. An explicit user date range overrides both. End is exclusive `YYYY-MM-DD`. Do not drop ended events inside an explicit historical range.
 
 `gws_cards.select_calendar_scope` implements 1–3. For the publish pipe, pass `--auto-scope --now <RFC3339> --today YYYY-MM-DD` so ended events are dropped and the 30-day fallback publishes one event. Without `--auto-scope`, `--range-start`/`--range-end` publish the given window as-is (explicit dates). Raw `events.list` items go to `gws_cards.py events`; `--auto-scope` normalizes them before selecting.

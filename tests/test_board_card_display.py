@@ -290,7 +290,9 @@ class TestBoardMarkup(unittest.TestCase):
         self.assertIn("overflow", css)
         media = css.split("@media")[-1]
         self.assertIn("max-width", media)
-        self.assertRegex(media, r"top\s*:\s*\d+px")
+        match = __import__("re").search(r"top\s*:\s*(\d+)px", media)
+        self.assertIsNotNone(match)
+        self.assertGreaterEqual(int(match.group(1)), 200)
         self.assertNotIn("inset: 0", media)
         self.assertNotIn("inset:0", media)
 

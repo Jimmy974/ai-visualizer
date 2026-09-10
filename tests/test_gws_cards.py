@@ -189,11 +189,8 @@ class TestGwsCalendar(unittest.TestCase):
         self.assertTrue(card["items"][1]["id"])
 
     def test_default_today_range_and_30_day_fallback(self):
-        today = gws_cards.calendar_window(
-            today="2026-09-10",
-            timezone="Europe/London",
-            today_count=2,
-            fallback_count=0,
+        today, _tz = gws_cards.validate_range_and_timezone(
+            "2026-09-10", "2026-09-11", "Europe/London"
         )
         self.assertEqual(today, {"start": "2026-09-10", "end": "2026-09-11"})
         ended = {
@@ -248,16 +245,49 @@ class TestGwsCalendar(unittest.TestCase):
             today="2026-09-10",
         )
         self.assertEqual([i["id"] for i in fb_items], ["next"])
-        self.assertEqual(fb_rng, {"start": "2026-09-25", "end": "2026-09-26"})
-        explicit = gws_cards.calendar_window(
-            today="2026-09-10",
-            timezone="Europe/London",
-            today_count=0,
-            fallback_count=0,
-            explicit_start="2026-03-29",
-            explicit_end="2026-03-30",
+        self.assertEqual(fb_rng, {"start": "2026-09-10", "end": "2026-10-10"})
+        explicit, _tz = gws_cards.validate_range_and_timezone(
+            "2026-03-29", "2026-03-30", "Europe/London"
         )
         self.assertEqual(explicit, {"start": "2026-03-29", "end": "2026-03-30"})
+        self.assertFalse(hasattr(gws_cards, "calendar_window"))
+
+    def test_sort_uses_parsed_instants_not_raw_strings(self):
+        earlier_london = {
+            "id": "plus-one",
+            "title": "Eleven",
+            "allDay": False,
+            "start": "2026-09-10T11:00:00+01:00",
+            "end": "2026-09-10T12:00:00+01:00",
+        }
+        later_z = {
+            "id": "zulu",
+            "title": "Half past",
+            "allDay": False,
+            "start": "2026-09-10T10:30:00Z",
+            "end": "2026-09-10T11:30:00Z",
+        }
+        now = board_cards.parse_rfc3339("2026-09-10T10:00:00+01:00")
+        selected, _rng = gws_cards.select_calendar_scope(
+            [later_z, earlier_london],
+            timezone="Europe/London",
+            now=now,
+            today="2026-09-10",
+        )
+        self.assertEqual([i["id"] for i in selected], ["plus-one", "zulu"])
+        later_day_z = dict(later_z)
+        later_day_z["start"] = "2026-09-11T10:30:00Z"
+        later_day_z["end"] = "2026-09-11T11:30:00Z"
+        later_day_plus = dict(earlier_london)
+        later_day_plus["start"] = "2026-09-11T11:00:00+01:00"
+        later_day_plus["end"] = "2026-09-11T12:00:00+01:00"
+        fb_items, _fb = gws_cards.select_calendar_scope(
+            [later_day_z, later_day_plus],
+            timezone="Europe/London",
+            now=board_cards.parse_rfc3339("2026-09-10T18:00:00+01:00"),
+            today="2026-09-10",
+        )
+        self.assertEqual([i["id"] for i in fb_items], ["plus-one"])
 
     def test_empty_calendar_still_has_range_and_timezone(self):
         card = gws_cards.normalize_events(
@@ -406,7 +436,29 @@ class TestLoadingErrorAndCli(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         card = json.loads(proc.stdout)
         self.assertEqual([i["id"] for i in card["items"]], ["next"])
-        self.assertEqual(card["range"], {"start": "2026-09-25", "end": "2026-09-26"})
+        self.assertEqual(card["range"], {"start": "2026-09-10", "end": "2026-10-10"})
+        self.assertEqual(card["totalCount"], 1)
+
+    def test_auto_scope_dedupes_duplicate_event_ids(self):
+        event = {
+            "id": "dup",
+            "status": "confirmed",
+            "summary": "Twice",
+            "start": {"dateTime": "2026-09-10T20:00:00+01:00", "timeZone": "Europe/London"},
+            "end": {"dateTime": "2026-09-10T21:00:00+01:00", "timeZone": "Europe/London"},
+        }
+        payload = {"items": [event, dict(event)]}
+        proc = _run(
+            "events",
+            "--timezone", "Europe/London",
+            "--auto-scope",
+            "--now", "2026-09-10T18:00:00+01:00",
+            "--today", "2026-09-10",
+            stdin=json.dumps(payload),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        card = json.loads(proc.stdout)
+        self.assertEqual([i["id"] for i in card["items"]], ["dup"])
         self.assertEqual(card["totalCount"], 1)
 
     def test_limits_imported_from_board_cards(self):
