@@ -97,6 +97,8 @@ python3 board_cards.py --cards-file /absolute/disposable/cards.json clear --card
 
 `publish` reads one card (`todo` or `calendar`) from stdin and merges it into the snapshot. `clear` removes saved board content only; it does not change Google.
 
+**Sinner + Google.** Load [`docs/agents/board-info-cards.md`](docs/agents/board-info-cards.md) into the Sinner session before asking for tasks or calendar. Sinner uses its existing `gws` CLI (not a second OAuth flow), normalizes with `gws_cards.py`, and publishes through `board_cards.py --cards-file <path>`. That document is the handoff; this repo does not auto-install it into Sinner's home.
+
 Writes take a sidecar lock file (`*.json.lock`) created with exclusive `O_CREAT|O_EXCL`. If another writer holds the lock for more than 5 seconds, the command fails without changing the snapshot. Locks are not stolen automatically after a crash. If a `.lock` file is left behind, confirm no publisher is running, then delete that lock file by hand to recover.
 
 On POSIX the snapshot and lock are created with owner-only permissions (`0600`). On Windows that restriction is best-effort and does not block publishing.
