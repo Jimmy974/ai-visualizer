@@ -94,7 +94,7 @@ Recommendation: fix wide `z-index`/padding so Calendar does not cover `.hud`, re
 - Base: `main` (`24dbcc5`)
 - Fixed point: `75a7f84`
 - Range: `75a7f84..HEAD` (implementation `57eee97..cc82624`)
-- PR URL: (pending)
+- PR URL: https://github.com/Jimmy974/ai-visualizer/pull/1
 
 Finish without a PR:
 
