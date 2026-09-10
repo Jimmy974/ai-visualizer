@@ -110,7 +110,46 @@ herdr worktree remove --workspace wH
 
 QA screenshots were not committed (47MB). They remain at `.scratch/board-info-cards/qa-evidence/` in the worktree.
 
-## 8. Panes
+## 8. Try it yourself
+
+All commands run from the worktree and use a disposable snapshot file, so your real `ai-visualizer.json` and the server on 8790 are untouched.
+
+```bash
+cd /Users/jimmywong/.herdr/worktrees/ai-visualizer/feat-board-info-cards
+export CARDS=/tmp/board-cards-demo.json
+
+# 1. Start the server on a spare port
+python3 server.py --no-open --port 8797 --cards-file $CARDS
+```
+
+2. Open **http://127.0.0.1:8797/faces/board/index.html** — the board shows an invitation ("Ask Sinner for your tasks/calendar") and two empty cards.
+
+3. Publish your real Google data (second terminal, same `$CARDS`):
+
+```bash
+python3 gws_cards.py tasks | python3 board_cards.py --cards-file $CARDS publish
+python3 gws_cards.py events --timezone Europe/London --auto-scope | python3 board_cards.py --cards-file $CARDS publish
+```
+
+Within a few seconds, without reloading, the Todo card lists your open tasks (8 at QA time) and the Calendar card shows today's remaining events, or the next one within 30 days with its date labelled.
+
+4. Error state — the card shows the error but keeps its previous items:
+
+```bash
+python3 gws_cards.py error --card calendar --message "Google down" | python3 board_cards.py --cards-file $CARDS publish
+```
+
+5. Reset to the invitation state:
+
+```bash
+python3 board_cards.py --cards-file $CARDS clear --card all
+```
+
+Stop the server with Ctrl-C. Full publish/clear/scope reference: `docs/agents/board-info-cards.md`.
+
+**Not demonstrable yet:** at 1440px and wider the Calendar card covers the top-right HUD (open item, `cards.css:10,16`). Triggering the publish from Sinner itself (rather than piping by hand) needs `docs/agents/board-info-cards.md` loaded into a Sinner session first; that path was not exercised in QA.
+
+## 9. Panes
 
 Workspace `wH` (board-info-cards), left open:
 
