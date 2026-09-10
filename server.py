@@ -187,7 +187,44 @@ def read_bus():
             "alert": alert, "loading": loading, "rate_limits": rate_limits}
 
 
+_MIC_MODES = ("ptt", "open", "wake")
+
+
+def _mic_read():
+    try:
+        m = (BUS / ".mic_mode").read_text().strip().lower()
+        return m if m in _MIC_MODES else "ptt"
+    except OSError:
+        return "ptt"
+
+
 class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        # LOCAL PATCH (Jimmy, 2026-09-09): the face's MIC button posts
+        # {"mode": ...}; backtalk watches the file and flips live.
+        path = self.path.split("?")[0]
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(n) if 0 < n < 4096 else b"{}"
+        try:
+            if path == "/mic":
+                mode = str(json.loads(body or b"{}").get("mode", "")).lower()
+                if mode not in _MIC_MODES:
+                    self._send(b'{"error":"bad mode"}', "application/json", 400)
+                    return
+                (BUS / ".mic_mode").write_text(mode)
+                self._send(json.dumps({"mode": mode}).encode(),
+                           "application/json")
+            else:
+                self._send(b"not found", "text/plain", 404)
+        except ConnectionError:
+            pass
+        except Exception as e:
+            try:
+                self._send(json.dumps({"error": str(e)}).encode(),
+                           "application/json", 500)
+            except ConnectionError:
+                pass
+
     def do_GET(self):
         path = self.path.split("?")[0]
         try:
@@ -200,6 +237,11 @@ class Handler(BaseHTTPRequestHandler):
                        "thinking_sound": bool(CFG["thinking_sound"]),
                        "faces": list_faces()}
                 self._send(json.dumps(out).encode(), "application/json")
+            elif path == "/mic":
+                # LOCAL PATCH (Jimmy, 2026-09-09): mic-mode sync with
+                # backtalk through <bus>/.mic_mode (ptt | open | wake).
+                self._send(json.dumps({"mode": _mic_read()}).encode(),
+                           "application/json")
             else:
                 self._static(path)
         except ConnectionError:

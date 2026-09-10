@@ -269,6 +269,52 @@ const AV = (() => {
     }
   }
 
+  /* ------------------------------- mic button ------------------------------ */
+  // LOCAL PATCH (Jimmy, 2026-09-09): a MIC button beside SND that cycles
+  // backtalk's microphone mode (PTT -> WAKE -> OPEN) through the server's
+  // /mic endpoint; backtalk watches the .mic_mode file and flips live.
+  // Polled every 2s so a voice-console switch shows up here too.
+  let micBtn = null, micMode = "ptt";
+  const MIC_LABEL = { ptt: "MIC PTT", wake: "MIC WAKE", open: "MIC OPEN" };
+  // Jimmy's choice: the button only toggles PTT <-> WAKE. "open" stays
+  // reachable by voice ("go hands free") and shows as MIC OPEN if set.
+  const MIC_NEXT = { ptt: "wake", wake: "ptt", open: "ptt" };
+  function micBtnInit() {
+    if (SHOT || DEMO) return;
+    micBtn = document.createElement("div");
+    micBtn.style.cssText =
+      "position:fixed;left:160px;bottom:14px;z-index:50;cursor:pointer;" +
+      "font:12px 'SF Mono',Menlo,Consolas,monospace;letter-spacing:.2em;" +
+      "color:#5a6a72;opacity:0;transition:opacity .4s;user-select:none;" +
+      "pointer-events:none";
+    micBtn.title = "microphone mode: push-to-talk / wake word / always listening";
+    let hideT = null;
+    addEventListener("mousemove", () => {
+      micBtn.style.opacity = ".65";
+      micBtn.style.pointerEvents = "auto";
+      clearTimeout(hideT);
+      hideT = setTimeout(() => {
+        micBtn.style.opacity = "0";
+        micBtn.style.pointerEvents = "none";
+      }, 3000);
+    });
+    micBtn.onclick = () => {
+      const want = MIC_NEXT[micMode] || "ptt";
+      fetch("/mic", { method: "POST", body: JSON.stringify({ mode: want }) })
+        .then(r => r.json()).then(j => { if (j.mode) { micMode = j.mode; micPaint(); } })
+        .catch(() => {});
+    };
+    micPaint();
+    document.body.appendChild(micBtn);
+    const poll = () => fetch("/mic", { cache: "no-store" }).then(r => r.json())
+      .then(j => { if (j.mode && j.mode !== micMode) { micMode = j.mode; micPaint(); } })
+      .catch(() => {});
+    poll(); setInterval(poll, 2000);
+  }
+  function micPaint() {
+    if (micBtn) micBtn.textContent = MIC_LABEL[micMode] || "MIC ?";
+  }
+
   /* ------------------------------ shot harness ----------------------------- */
   // Runs the face's frame() deterministically (a synchronous burst of t ms).
   // A headless browser resizes the window and finishes loading images AFTER
@@ -293,6 +339,7 @@ const AV = (() => {
     A._mic = !!opts.mic;
     if (A._mic && !DEMO) micStart();
     if (opts.sound !== false) soundInit(); else A._sndWant = false;
+    micBtnInit();
     if (DEMO) {
       applyConfig({ name: Q.get("name") || "JARVIS" });
     } else {
