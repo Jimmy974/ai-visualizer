@@ -1,0 +1,10 @@
+mode: quick-auto
+pr: true
+issue: Jimmy974/ai-visualizer#2
+graph: no
+presence: telegram
+base: main
+feature: calendar-hud-overlap
+branch: feat/calendar-hud-overlap
+workspace: w5
+wt: /home/box/.herdr/worktrees/ai-visualizer/feat-calendar-hud-overlap
