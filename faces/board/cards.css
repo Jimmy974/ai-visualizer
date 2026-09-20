@@ -13,7 +13,7 @@
   grid-template-columns: minmax(220px, 26vw) 1fr minmax(220px, 26vw);
   align-items: start;
   gap: 16px;
-  padding: 108px 48px 92px;
+  padding: 220px 48px 92px;
   box-sizing: border-box;
   transition: opacity .7s;
 }
@@ -28,7 +28,7 @@ body.cine #board-cards {
   pointer-events: auto;
   cursor: default;
   grid-row: 1;
-  max-height: calc(100vh - 210px);
+  max-height: calc(100vh - 322px);
   overflow: auto;
   overscroll-behavior: contain;
   padding: 14px 16px 16px;

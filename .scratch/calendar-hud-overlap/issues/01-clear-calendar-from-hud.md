@@ -1,6 +1,6 @@
 # 01: Keep Calendar clear of the board HUD
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: None (can start immediately)
 Files: faces/board/cards.css
 
@@ -17,11 +17,11 @@ Files: faces/board/cards.css
 
 ## Acceptance criteria
 
-- [ ] At 1440×900, 1920×1080, and 2560×1440 with populated Calendar and live usage rows, Calendar's rectangle does not intersect the orb (including its outer ring) or usage text; both HUD elements and all Calendar text remain readable.
-- [ ] Clearance comes from layout spacing rather than only changing stacking order, hiding HUD content, or reducing its text size.
-- [ ] With overflowing card content at 1440×900, both cards remain keyboard focusable and scrollable, and their lower edges stay above the bottom HUD text.
-- [ ] At 899×900 the narrow stacked layout still scrolls, and at 900×900 the desktop layout keeps Calendar clear of the populated status block. Cinematic mode still hides the cards and restoring normal mode restores them.
-- [ ] `python3 -m unittest discover -s tests -p 'test_board_card_display.py'` passes with Node available; confirm the rendered acceptance criteria in a browser because this suite does not measure layout.
+- [x] At 1440×900, 1920×1080, and 2560×1440 with populated Calendar and live usage rows, Calendar's rectangle does not intersect the orb (including its outer ring) or usage text; both HUD elements and all Calendar text remain readable.
+- [x] Clearance comes from layout spacing rather than only changing stacking order, hiding HUD content, or reducing its text size.
+- [x] With overflowing card content at 1440×900, both cards remain keyboard focusable and scrollable, and their lower edges stay above the bottom HUD text.
+- [x] At 899×900 the narrow stacked layout still scrolls, and at 900×900 the desktop layout keeps Calendar clear of the populated status block. Cinematic mode still hides the cards and restoring normal mode restores them.
+- [x] `python3 -m unittest discover -s tests -p 'test_board_card_display.py'` passes with Node available; confirm the rendered acceptance criteria in a browser because this suite does not measure layout.
 
 ## Assumptions
 
