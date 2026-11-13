@@ -308,6 +308,47 @@
     }
   }
 
+  const HUD_GAP = 16;
+  const HUD_SELECTORS = ["#brand", "#statusblock"];
+
+  // Pixels from the viewport top that the cards must start below so they
+  // never cover the HUD. rects: DOMRect-like {bottom, width, height}.
+  function hudClearance(rects, gap) {
+    if (gap == null) gap = HUD_GAP;
+    let bottom = 0;
+    for (let i = 0; i < (rects || []).length; i++) {
+      const r = rects[i];
+      if (!r || !(r.width > 0 || r.height > 0)) continue;
+      const b = Number(r.bottom);
+      if (Number.isFinite(b) && b > bottom) bottom = b;
+    }
+    return bottom > 0 ? Math.ceil(bottom + gap) : 0;
+  }
+
+  function watchHud(root) {
+    const els = [];
+    for (let i = 0; i < HUD_SELECTORS.length; i++) {
+      const el = document.querySelector(HUD_SELECTORS[i]);
+      if (el) els.push(el);
+    }
+    if (!els.length || !root.style) return;
+    let last = null;
+    function update() {
+      const px = hudClearance(els.map(function (el) { return el.getBoundingClientRect(); }));
+      if (!px || px === last) return;
+      last = px;
+      root.style.setProperty("--hud-clear", px + "px");
+    }
+    update();
+    if (typeof ResizeObserver === "function") {
+      const ro = new ResizeObserver(update);
+      els.forEach(function (el) { ro.observe(el); });
+    }
+    if (typeof window !== "undefined" && window.addEventListener) {
+      window.addEventListener("resize", update);
+    }
+  }
+
   function viewOpts(extra) {
     extra = extra || {};
     extra.agentName = BoardCards.agentName || "JARVIS";
@@ -378,6 +419,7 @@
       obs.observe(document.body, { attributes: true, attributeFilter: ["class"] });
     }
     syncCine(root);
+    watchHud(root);
     startLive();
   }
 
@@ -388,6 +430,7 @@
   BoardCards.snapshotView = snapshotView;
   BoardCards.shouldIgnoreGlobalKeys = shouldIgnoreGlobalKeys;
   BoardCards.createPoller = createPoller;
+  BoardCards.hudClearance = hudClearance;
   BoardCards.init = init;
 
   root.BoardCards = BoardCards;

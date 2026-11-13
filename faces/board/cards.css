@@ -5,6 +5,11 @@
  */
 
 #board-cards {
+  /* --hud-clear: px below the lowest HUD block (#brand, #statusblock).
+     cards.js measures it live; this fallback clears the status block at
+     common sizes when JS has not run yet. */
+  --hud-clear: calc(80px + 10vw);
+  --cards-top: max(108px, var(--hud-clear));
   position: fixed;
   inset: 0;
   z-index: 12;
@@ -13,7 +18,7 @@
   grid-template-columns: minmax(220px, 26vw) 1fr minmax(220px, 26vw);
   align-items: start;
   gap: 16px;
-  padding: 108px 48px 92px;
+  padding: var(--cards-top) 48px 92px;
   box-sizing: border-box;
   transition: opacity .7s;
 }
@@ -28,7 +33,7 @@ body.cine #board-cards {
   pointer-events: auto;
   cursor: default;
   grid-row: 1;
-  max-height: calc(100vh - 210px);
+  max-height: calc(100vh - var(--cards-top) - 102px);
   overflow: auto;
   overscroll-behavior: contain;
   padding: 14px 16px 16px;

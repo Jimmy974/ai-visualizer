@@ -243,6 +243,17 @@ Promise.resolve()
     assert(scheduled.length === 1, "re-armed after return");
   });
 }))
+.then(() => test("hud clearance takes lowest visible HUD bottom plus gap", () => {
+  assert(typeof BC.hudClearance === "function", "hudClearance exported");
+  const brand = {bottom: 80, width: 300, height: 46};
+  const status = {bottom: 160.4, width: 200, height: 126};
+  assert(BC.hudClearance([brand, status]) === 177, "default 16px gap, ceil");
+  assert(BC.hudClearance([brand, status], 0) === 161, "custom gap");
+  assert(BC.hudClearance([status, brand], 10) === 171, "order independent");
+  assert(BC.hudClearance([{bottom: 500, width: 0, height: 0}, brand], 0) === 80, "hidden ignored");
+  assert(BC.hudClearance([], 16) === 0, "nothing measured -> 0 (keep CSS fallback)");
+  assert(BC.hudClearance(null) === 0, "null safe");
+}))
 .then(() => {
   const failed = results.filter((r) => !r.ok);
   if (failed.length) {
@@ -295,6 +306,26 @@ class TestBoardMarkup(unittest.TestCase):
         self.assertGreaterEqual(int(match.group(1)), 200)
         self.assertNotIn("inset: 0", media)
         self.assertNotIn("inset:0", media)
+
+
+    def test_wide_layout_clears_hud_via_measured_variable(self):
+        css = CARDS_CSS.read_text()
+        wide = css.split("@media")[0]
+        block = wide[wide.find("#board-cards {"):]
+        block = block[:block.find("}")]
+        # Top offset comes from the measured HUD bottom, never a fixed 108px.
+        self.assertIn("--hud-clear:", block)
+        self.assertIn("--cards-top: max(108px, var(--hud-clear))", block)
+        self.assertRegex(block, r"padding:\s*var\(--cards-top\)")
+        self.assertNotIn("padding: 108px", block)
+        # Panels shrink with the offset so they stay above the bottom bar.
+        self.assertIn("max-height: calc(100vh - var(--cards-top)", wide)
+        js = CARDS_JS.read_text()
+        self.assertIn('setProperty("--hud-clear"', js)
+        self.assertIn("ResizeObserver", js)
+        self.assertIn('addEventListener("resize"', js)
+        for sel in ("#brand", "#statusblock"):
+            self.assertIn('"%s"' % sel, js)
 
 
 @unittest.skipUnless(NODE, "node is required to execute cards.js tests")
