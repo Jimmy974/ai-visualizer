@@ -120,9 +120,21 @@ body.cine #board-cards {
 }
 
 @media (max-width: 899px) {
+  /* The transcript line (#echo, index.html: bottom 76px) wraps upward. Cap it
+     at 3 lines of 14px and keep the cards region above that cap, so the two
+     never overlap however long the text is. 76 + 42 + 12 gap = 130.
+     Overflow hides the OLDEST lines: cards.js (watchTranscript) keeps the box
+     scrolled to its end, so the newest words and the cursor stay visible. */
+  #echo {
+    font-size: 10px;
+    line-height: 14px;
+    max-height: 42px;
+    overflow: hidden;
+  }
+
   #board-cards {
     top: 220px;
-    bottom: 80px;
+    bottom: 130px;
     left: 0;
     right: 0;
     z-index: 9;

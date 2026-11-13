@@ -77,12 +77,29 @@
     });
   }
 
+  function ymdToUTC(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN;
+  }
+
+  // Stored all-day items carry an EXCLUSIVE endDate (Google style), so the
+  // last day of a multi-day event is endDate - 1. Returns "" for a one-day
+  // event (endDate = startDate + 1) or when either date is missing or odd.
+  function lastAllDay(item) {
+    const start = ymdToUTC(item.startDate);
+    const end = ymdToUTC(item.endDate);
+    if (Number.isNaN(start) || Number.isNaN(end)) return "";
+    const last = end - 86400000;
+    return last > start ? new Date(last).toISOString().slice(0, 10) : "";
+  }
+
   function presentItem(cardId, item, timeZone) {
     let meta = "";
     if (cardId === "todo") {
       meta = item.dueDate || "";
     } else if (item.allDay) {
-      meta = "All day · " + (item.startDate || "");
+      const last = lastAllDay(item);
+      meta = "All day · " + (item.startDate || "") + (last ? " → " + last : "");
     } else {
       meta = formatHM(item.start, timeZone) + " – " + formatHM(item.end, timeZone);
     }
@@ -349,6 +366,30 @@
     }
   }
 
+  // The narrow layout caps #echo at 3 lines with overflow hidden (cards.css),
+  // so keep the box scrolled to its end: the oldest lines are the ones that
+  // drop out of view and the newest words and the blinking cursor stay shown.
+  // A no-op where #echo does not overflow (wide layout) or is missing.
+  function pinToEnd(el) {
+    if (!el || typeof el.scrollHeight !== "number") return;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // Ctor is injectable for tests; defaults to the page's MutationObserver.
+  function watchTranscript(el, Ctor) {
+    if (!el) return;
+    if (!Ctor && typeof MutationObserver === "function") Ctor = MutationObserver;
+    pinToEnd(el);
+    if (Ctor) {
+      new Ctor(function () { pinToEnd(el); }).observe(el, {
+        childList: true, characterData: true, subtree: true,
+      });
+    }
+    if (typeof window !== "undefined" && window.addEventListener) {
+      window.addEventListener("resize", function () { pinToEnd(el); });
+    }
+  }
+
   function viewOpts(extra) {
     extra = extra || {};
     extra.agentName = BoardCards.agentName || "JARVIS";
@@ -420,6 +461,7 @@
     }
     syncCine(root);
     watchHud(root);
+    watchTranscript(document.getElementById("echo"));
     startLive();
   }
 
@@ -431,6 +473,8 @@
   BoardCards.shouldIgnoreGlobalKeys = shouldIgnoreGlobalKeys;
   BoardCards.createPoller = createPoller;
   BoardCards.hudClearance = hudClearance;
+  BoardCards.pinToEnd = pinToEnd;
+  BoardCards.watchTranscript = watchTranscript;
   BoardCards.init = init;
 
   root.BoardCards = BoardCards;
