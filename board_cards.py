@@ -214,6 +214,11 @@ def _is_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _is_version(value):
+    # True == 1 in Python, so a bare `!= VERSION` check would accept JSON true.
+    return _is_int(value) and value == VERSION
+
+
 def sanitize_message(value):
     if not isinstance(value, str):
         raise ValidationError("error message must be a string")
@@ -297,7 +302,7 @@ def _parse_total_count(value, n_items):
 def validate_update(payload):
     if not isinstance(payload, dict):
         raise ValidationError("card update must be a JSON object")
-    if "version" in payload and payload.get("version") != VERSION:
+    if "version" in payload and not _is_version(payload.get("version")):
         raise ValidationError("unsupported snapshot version")
     card_id = payload.get("id")
     if card_id not in CARD_IDS:
@@ -369,7 +374,7 @@ def validate_snapshot(data):
     try:
         if not isinstance(data, dict):
             raise ValidationError("snapshot must be an object")
-        if data.get("version") != VERSION:
+        if not _is_version(data.get("version")):
             raise ValidationError("unsupported snapshot version")
         cards = data.get("cards")
         if not isinstance(cards, list):
