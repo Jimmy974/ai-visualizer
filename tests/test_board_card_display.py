@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -437,6 +438,207 @@ console.log(JSON.stringify(out));
         self.assertEqual(out["afterShrink"], 70)
         # init wires it to the real #echo.
         self.assertIn('watchTranscript(document.getElementById("echo"))', CARDS_JS.read_text())
+
+    # ── calendar order: card.timezone, never the browser's zone ──────────
+    BROWSER_ZONES = ("Asia/Tokyo", "Europe/London", "America/Los_Angeles")
+
+    # Fixtures: (card timezone, items in input order). Ids name the expected slot.
+    SORT_FIXTURES = {
+        # checks/pilot3.mjs section D: 23:30Z on the 28th is still the 28th in London.
+        "check_d": ("Europe/London", [
+            {"id": "allday", "title": "All day on the 29th", "allDay": True,
+             "startDate": "2026-03-29", "endDate": "2026-03-30"},
+            {"id": "late", "title": "Late on the 28th", "allDay": False,
+             "start": "2026-03-28T23:30:00Z", "end": "2026-03-28T23:50:00Z"},
+        ]),
+        # London clocks go forward at 01:00Z on 2026-03-29 (GMT -> BST).
+        "london_dst": ("Europe/London", [
+            {"id": "a30", "title": "a30", "allDay": True, "startDate": "2026-03-30", "endDate": "2026-03-31"},
+            {"id": "t30_0030bst", "title": "t", "allDay": False,
+             "start": "2026-03-29T23:30:00Z", "end": "2026-03-29T23:45:00Z"},
+            {"id": "t29_0230bst", "title": "t", "allDay": False,
+             "start": "2026-03-29T01:30:00Z", "end": "2026-03-29T02:00:00Z"},
+            {"id": "a29", "title": "a29", "allDay": True, "startDate": "2026-03-29", "endDate": "2026-03-30"},
+            {"id": "t29_0030gmt", "title": "t", "allDay": False,
+             "start": "2026-03-29T00:30:00Z", "end": "2026-03-29T00:45:00Z"},
+            {"id": "t28_2359", "title": "t", "allDay": False,
+             "start": "2026-03-28T23:59:00Z", "end": "2026-03-29T00:10:00Z"},
+        ]),
+        # Auckland is UTC+13 here: 12:30Z on the 28th is 01:30 on the 29th.
+        "auckland": ("Pacific/Auckland", [
+            {"id": "t29_0130", "title": "t", "allDay": False,
+             "start": "2026-03-28T12:30:00Z", "end": "2026-03-28T13:00:00Z"},
+            {"id": "a29", "title": "a29", "allDay": True, "startDate": "2026-03-29", "endDate": "2026-03-30"},
+            {"id": "t28_2300", "title": "t", "allDay": False,
+             "start": "2026-03-28T10:00:00Z", "end": "2026-03-28T10:30:00Z"},
+        ]),
+        # A timed event at exactly local midnight ties the all-day item: all-day first.
+        "midnight_london": ("Europe/London", [
+            {"id": "t_midnight", "title": "t", "allDay": False,
+             "start": "2026-03-29T00:00:00Z", "end": "2026-03-29T00:30:00Z"},
+            {"id": "a29", "title": "a29", "allDay": True, "startDate": "2026-03-29", "endDate": "2026-03-30"},
+        ]),
+        "midnight_auckland": ("Pacific/Auckland", [
+            {"id": "t_midnight", "title": "t", "allDay": False,
+             "start": "2026-03-28T11:00:00Z", "end": "2026-03-28T11:30:00Z"},
+            {"id": "a29", "title": "a29", "allDay": True, "startDate": "2026-03-29", "endDate": "2026-03-30"},
+        ]),
+        # Exact ties keep input order (stable, like Python's sorted()).
+        "ties": ("Europe/London", [
+            {"id": "a1", "title": "a1", "allDay": True, "startDate": "2026-03-29", "endDate": "2026-03-30"},
+            {"id": "t1", "title": "t1", "allDay": False,
+             "start": "2026-03-29T09:00:00Z", "end": "2026-03-29T10:00:00Z"},
+            {"id": "a2", "title": "a2", "allDay": True, "startDate": "2026-03-29", "endDate": "2026-03-31"},
+            {"id": "t2", "title": "t2", "allDay": False,
+             "start": "2026-03-29T10:00:00+01:00", "end": "2026-03-29T11:00:00+01:00"},
+        ]),
+        # London clocks go back at 01:00Z on 2026-10-25: 01:00-02:00 local happens twice.
+        # Python compares same-zone datetimes by wall clock, so 01:15 GMT sorts
+        # before 01:45 BST even though it is the later instant.
+        "london_fold": ("Europe/London", [
+            {"id": "bst_0145", "title": "t", "allDay": False,
+             "start": "2026-10-25T00:45:00Z", "end": "2026-10-25T00:50:00Z"},
+            {"id": "gmt_0115", "title": "t", "allDay": False,
+             "start": "2026-10-25T01:15:00Z", "end": "2026-10-25T01:20:00Z"},
+        ]),
+    }
+
+    EXPECTED_ORDER = {
+        "check_d": ["late", "allday"],
+        "london_dst": ["t28_2359", "a29", "t29_0030gmt", "t29_0230bst", "a30", "t30_0030bst"],
+        "auckland": ["t28_2300", "a29", "t29_0130"],
+        "midnight_london": ["a29", "t_midnight"],
+        "midnight_auckland": ["a29", "t_midnight"],
+        "ties": ["a1", "a2", "t1", "t2"],
+        "london_fold": ["gmt_0115", "bst_0145"],
+    }
+
+    def _node_json(self, body, browser_tz):
+        env = dict(os.environ, TZ=browser_tz)
+        proc = subprocess.run(
+            [NODE, "-e", JS_PREAMBLE + body, str(CARDS_JS)],
+            cwd=str(REPO), capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        return json.loads(proc.stdout)
+
+    def _sorted_ids_in(self, browser_tz):
+        """Sort every fixture via panelView (the board path) and sortCalendarItems."""
+        body = r"""
+const fixtures = %s;
+const out = {browserOffset: new Date("2026-03-29T12:00:00Z").getTimezoneOffset()};
+for (const name of Object.keys(fixtures)) {
+  const [tz, items] = fixtures[name];
+  const direct = BC.sortCalendarItems(items, tz).map((i) => i.id);
+  // panelView shows CAL_LIMIT rows; page through by removing shown ids.
+  const titled = items.map((i) => Object.assign({}, i, {title: i.id}));
+  const shown = [];
+  let rest = titled;
+  while (rest.length) {
+    const view = BC.panelView({
+      id:"calendar", status:"ready", attemptedAt:"2026-03-29T12:00:00Z",
+      updatedAt:"2026-03-29T12:00:00Z", totalCount:rest.length, timezone:tz,
+      range:{start:"2026-03-28", end:"2026-04-01"}, items:rest,
+    }, {});
+    const ids = view.items.map((v) => v.title);
+    shown.push(...ids);
+    rest = rest.filter((i) => ids.indexOf(i.id) === -1);
+  }
+  out[name] = {direct, panel: shown};
+}
+console.log(JSON.stringify(out));
+""" % json.dumps(self.SORT_FIXTURES)
+        return self._node_json(body, browser_tz)
+
+    def test_calendar_order_same_in_every_browser_timezone(self):
+        runs = {tz: self._sorted_ids_in(tz) for tz in self.BROWSER_ZONES}
+        offsets = {runs[tz]["browserOffset"] for tz in self.BROWSER_ZONES}
+        self.assertEqual(len(offsets), 3, "TZ env did not change node's local zone")
+        for name, want in self.EXPECTED_ORDER.items():
+            for tz in self.BROWSER_ZONES:
+                with self.subTest(fixture=name, browser=tz):
+                    self.assertEqual(runs[tz][name]["direct"], want)
+                    self.assertEqual(runs[tz][name]["panel"], want)
+
+    def test_check_d_fixture_late_28th_before_all_day_29th(self):
+        for tz in self.BROWSER_ZONES:
+            with self.subTest(browser=tz):
+                self.assertEqual(self._sorted_ids_in(tz)["check_d"]["panel"], ["late", "allday"])
+
+    def test_calendar_order_matches_python_reference_sort(self):
+        # Ties the browser rule to gws_cards._item_sort_key (code-review finding 2).
+        if str(REPO) not in sys.path:
+            sys.path.insert(0, str(REPO))
+        import gws_cards
+        runs = {tz: self._sorted_ids_in(tz) for tz in self.BROWSER_ZONES}
+        for name, (zone, items) in self.SORT_FIXTURES.items():
+            py_ids = [i["id"] for i in sorted(
+                items, key=lambda it: gws_cards._item_sort_key(it, zone))]
+            with self.subTest(fixture=name):
+                self.assertEqual(py_ids, self.EXPECTED_ORDER[name])
+                for tz in self.BROWSER_ZONES:
+                    self.assertEqual(runs[tz][name]["direct"], py_ids, tz)
+
+    def test_calendar_sort_missing_or_invalid_timezone_falls_back_to_utc(self):
+        body = r"""
+const items = [
+  {id:"a29", title:"a29", allDay:true, startDate:"2026-03-29", endDate:"2026-03-30"},
+  {id:"t29_0030z", title:"t29_0030z", allDay:false, start:"2026-03-29T00:30:00Z", end:"2026-03-29T01:00:00Z"},
+  {id:"t28_2330z", title:"t28_2330z", allDay:false, start:"2026-03-28T23:30:00Z", end:"2026-03-28T23:50:00Z"},
+];
+const ids = (xs) => xs.map((i) => i.id);
+const out = {};
+out.noArg = ids(BC.sortCalendarItems(items));
+out.undef = ids(BC.sortCalendarItems(items, undefined));
+out.empty = ids(BC.sortCalendarItems(items, ""));
+out.invalid = ids(BC.sortCalendarItems(items, "Not/A_Zone"));
+out.garbage = ids(BC.sortCalendarItems(items, "]]bad zone[["));
+const card = (tz) => ({
+  id:"calendar", status:"ready", attemptedAt:"2026-03-29T12:00:00Z",
+  updatedAt:"2026-03-29T12:00:00Z", totalCount:3, timezone:tz,
+  range:{start:"2026-03-28", end:"2026-03-30"}, items,
+});
+const noTz = card(undefined); delete noTz.timezone;
+out.panelMissing = BC.panelView(noTz, {}).items.map((i) => i.title);
+out.panelInvalid = BC.panelView(card("Bogus/Zone"), {}).items.map((i) => i.title);
+out.panelInvalidMode = BC.panelView(card("Bogus/Zone"), {}).mode;
+// Unparsable or missing dates must not throw either.
+const odd = [
+  {id:"ok", allDay:false, start:"2026-03-29T09:00:00Z"},
+  {id:"badstart", allDay:false, start:"not a date"},
+  {id:"nostart", allDay:false},
+  {id:"badday", allDay:true, startDate:"soon"},
+  {id:"noday", allDay:true},
+];
+out.odd = ids(BC.sortCalendarItems(odd, "Europe/London"));
+out.oddInvalidTz = ids(BC.sortCalendarItems(odd, "Nope/Nope"));
+out.notArray = BC.sortCalendarItems(null, "Europe/London").length;
+console.log(JSON.stringify(out));
+"""
+        utc = ["t28_2330z", "a29", "t29_0030z"]
+        for tz in self.BROWSER_ZONES:
+            with self.subTest(browser=tz):
+                out = self._node_json(body, tz)
+                for key in ("noArg", "undef", "empty", "invalid", "garbage",
+                            "panelMissing", "panelInvalid"):
+                    self.assertEqual(out[key], utc, key)
+                self.assertEqual(out["panelInvalidMode"], "ready")
+                self.assertEqual(sorted(out["odd"]), sorted(["ok", "badstart", "nostart", "badday", "noday"]))
+                self.assertEqual(out["odd"][-1], "ok", "dateless items sort first, valid one last")
+                self.assertEqual(out["oddInvalidTz"], out["odd"])
+                self.assertEqual(out["notArray"], 0)
+
+    def test_sort_path_reads_no_browser_local_time(self):
+        js = CARDS_JS.read_text()
+        start = js.find("const zoneFormatters")
+        end = js.find("function ymdToUTC")
+        self.assertGreater(start, 0)
+        self.assertGreater(end, start)
+        sort_path = js[start:end]
+        for getter in ("getFullYear", "getMonth", "getDate", "getHours",
+                       "getMinutes", "getTimezoneOffset", "getDay", "localYMD"):
+            self.assertNotIn(getter + "(", sort_path, getter)
+        self.assertIn("sortCalendarItems(items, card.timezone)", js)
 
     def test_cards_js_logic(self):
         self.assertTrue(CARDS_JS.is_file(), "cards.js missing")
