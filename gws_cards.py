@@ -79,15 +79,19 @@ def validate_range_and_timezone(range_start, range_end, timezone):
         rng = board_cards.parse_range({"start": range_start, "end": range_end})
     except board_cards.ValidationError as exc:
         raise ValueError(str(exc))
+    _tzinfo(tz)
     return rng, tz
 
 
 def _tzinfo(name):
+    """Resolve an IANA zone name; raise ValueError (never fall back to UTC)."""
     try:
         from zoneinfo import ZoneInfo
         return ZoneInfo(name)
     except Exception:
-        return datetime.timezone.utc
+        raise ValueError(
+            f"unknown timezone {name!r}; use an IANA name such as Europe/London"
+        )
 
 
 def _as_aware(now):
@@ -120,19 +124,23 @@ def _item_sort_key(item, timezone):
     return (_event_start_instant(item, timezone), all_day)
 
 
-def _overlaps_today_upcoming(item, now, timezone, today):
+def _overlaps_window(item, now, timezone, window_start, window_end):
+    """True if the item has not ended and starts before window_end (exclusive)."""
     if item_has_ended(item, now, timezone):
         return False
-    tomorrow = _add_days(today, 1)
     if item.get("allDay"):
-        return item["startDate"] < tomorrow and item["endDate"] > today
+        return item["startDate"] < window_end and item["endDate"] > window_start
     start = board_cards.parse_rfc3339(item["start"]).astimezone(_tzinfo(timezone))
-    tomorrow_dt = datetime.datetime.combine(
-        datetime.date.fromisoformat(tomorrow),
+    end_dt = datetime.datetime.combine(
+        datetime.date.fromisoformat(window_end),
         datetime.time.min,
         tzinfo=_tzinfo(timezone),
     )
-    return start < tomorrow_dt
+    return start < end_dt
+
+
+def _overlaps_today_upcoming(item, now, timezone, today):
+    return _overlaps_window(item, now, timezone, today, _add_days(today, 1))
 
 
 def select_calendar_scope(
@@ -159,12 +167,14 @@ def select_calendar_scope(
             today, _add_days(today, 1), timezone
         )
         return upcoming_today, rng
-    rest = [item for item in items if not item_has_ended(item, now, timezone)]
+    window_end = _add_days(today, 30)
+    rest = [
+        item for item in items
+        if _overlaps_window(item, now, timezone, today, window_end)
+    ]
     rest.sort(key=lambda item: _item_sort_key(item, timezone))
     if rest:
-        rng, _tz = validate_range_and_timezone(
-            today, _add_days(today, 30), timezone
-        )
+        rng, _tz = validate_range_and_timezone(today, window_end, timezone)
         return [rest[0]], rng
     rng, _tz = validate_range_and_timezone(today, _add_days(today, 1), timezone)
     return [], rng
