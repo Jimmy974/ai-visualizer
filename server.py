@@ -108,13 +108,24 @@ MOCK = None
 NO_OPEN = "--no-open" in sys.argv
 if "--mock" in sys.argv:
     i = sys.argv.index("--mock")
-    MOCK = sys.argv[i + 1] if len(sys.argv) > i + 1 else "speaking"
-    if MOCK not in STATES:
+    if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
+        # Bare --mock keeps its documented default.
         MOCK = "speaking"
+    else:
+        MOCK = sys.argv[i + 1]
+        if MOCK not in STATES:
+            sys.exit(f"server.py: error: argument --mock: invalid state "
+                     f"{MOCK!r} (choose from {', '.join(sorted(STATES))})")
 PORT = int(CFG.get("port", 8790))
 if "--port" in sys.argv:
     i = sys.argv.index("--port")
-    PORT = int(sys.argv[i + 1])
+    if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
+        sys.exit("server.py: error: argument --port: expected one argument")
+    _port = sys.argv[i + 1]
+    if not (_port.isascii() and _port.isdigit() and int(_port) <= 65535):
+        sys.exit(f"server.py: error: argument --port: invalid port {_port!r} "
+                 f"(expected an integer from 0 to 65535)")
+    PORT = int(_port)
 
 
 def _flag_value(flag):
