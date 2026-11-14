@@ -104,43 +104,107 @@ def load_config():
 CFG = load_config()
 BUS = Path(CFG["bus_dir"]).expanduser() if CFG.get("bus_dir") else HERE
 
-MOCK = None
-NO_OPEN = "--no-open" in sys.argv
-if "--mock" in sys.argv:
-    i = sys.argv.index("--mock")
-    if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
-        # Bare --mock keeps its documented default.
-        MOCK = "speaking"
-    else:
-        MOCK = sys.argv[i + 1]
-        if MOCK not in STATES:
-            sys.exit(f"server.py: error: argument --mock: invalid state "
-                     f"{MOCK!r} (choose from {', '.join(sorted(STATES))})")
-PORT = int(CFG.get("port", 8790))
-if "--port" in sys.argv:
-    i = sys.argv.index("--port")
-    if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
-        sys.exit("server.py: error: argument --port: expected one argument")
-    _port = sys.argv[i + 1]
-    if not (_port.isascii() and _port.isdigit() and int(_port) <= 65535):
-        sys.exit(f"server.py: error: argument --port: invalid port {_port!r} "
-                 f"(expected an integer from 0 to 65535)")
-    PORT = int(_port)
+def _flag_value(flag, check=None, bare=None):
+    """The value given for `flag` on the command line, or None if the flag
+    is not there.
+
+    Both "--flag value" and "--flag=value" count. A repeated flag follows the
+    usual rule: the LAST one wins, but every occurrence is read (and run
+    through `check`, which returns the checked value or exits), so a bad
+    value cannot hide behind a good one on either side of it.
+
+    "--flag=" is an explicit empty value and goes to `check`; it is never
+    mistaken for a bare flag. "--flag" with nothing after it (last argument,
+    or the next token starts with "--") is the same error argparse gives,
+    unless `bare` is set: then it stands for that documented default.
+    """
+    args = sys.argv[1:]
+    value = None
+    for i, tok in enumerate(args):
+        if tok.startswith(flag + "="):
+            raw = tok[len(flag) + 1:]
+        elif tok == flag:
+            if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                raw = args[i + 1]
+            elif bare is not None:
+                value = bare
+                continue
+            else:
+                # Same contract as board_cards.py (argparse): a flag that
+                # needs a value must not be silently ignored.
+                sys.exit(f"server.py: error: argument {flag}: "
+                         f"expected one argument")
+        else:
+            continue
+        value = check(raw) if check else raw
+    return value
 
 
-def _flag_value(flag):
-    if flag in sys.argv:
-        i = sys.argv.index(flag)
-        if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
-            # Same contract as board_cards.py (argparse): a flag that needs a
-            # value must not be silently ignored.
-            sys.exit(f"server.py: error: argument {flag}: expected one argument")
-        return sys.argv[i + 1]
+def _parse_port(v):
+    """v as a port number 0..65535, or None if it is not one. Takes an int or
+    a string of ASCII digits (the command line, and "8790" in a hand-edited
+    config). A bool is an int in Python but is never a port."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v if 0 <= v <= 65535 else None
+    if isinstance(v, str) and v.isascii() and v.isdigit():
+        # Strip zeros before int(): a very long digit string raises
+        # ValueError (the interpreter's int-conversion size limit).
+        digits = v.lstrip("0") or "0"
+        if len(digits) <= 5 and int(digits) <= 65535:
+            return int(digits)
     return None
 
 
+def _check_port_flag(raw):
+    port = _parse_port(raw)
+    if port is None:
+        sys.exit(f"server.py: error: argument --port: invalid port {raw!r} "
+                 f"(expected an integer from 0 to 65535)")
+    return port
+
+
+def _check_mock_flag(raw):
+    if raw not in STATES:
+        sys.exit(f"server.py: error: argument --mock: invalid state "
+                 f"{raw!r} (choose from {', '.join(sorted(STATES))})")
+    return raw
+
+
+def _check_cards_file_flag(raw):
+    if not raw:
+        # board_cards treats "" as "not given" and would quietly use the
+        # config/default path instead of the one the user asked for.
+        sys.exit("server.py: error: argument --cards-file: "
+                 "expected a non-empty path")
+    return raw
+
+
+def _config_port():
+    """The "port" from ai-visualizer.json (8790 if the file does not set
+    one). Only called when no --port was given, so a bad value there cannot
+    break a run that overrides it."""
+    raw = CFG["port"]
+    port = _parse_port(raw)
+    if port is None:
+        shown = repr(raw) if isinstance(raw, str) else json.dumps(raw)
+        sys.exit(f'server.py: error: ai-visualizer.json: invalid "port" '
+                 f"{shown} (expected an integer from 0 to 65535); "
+                 f"fix it there or pass --port")
+    return port
+
+
+NO_OPEN = "--no-open" in sys.argv
+# Bare --mock keeps its documented default.
+MOCK = _flag_value("--mock", _check_mock_flag, bare="speaking")
+PORT = _flag_value("--port", _check_port_flag)
+if PORT is None:
+    PORT = _config_port()
+
+
 CARDS_PATH = board_cards.resolve_cards_path(
-    cli_path=_flag_value("--cards-file"),
+    cli_path=_flag_value("--cards-file", _check_cards_file_flag),
     config_path=CFG.get("board_cards_file") or None,
     repo_root=HERE,
 )
@@ -332,6 +396,14 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def _urls(port):
+    root = f"http://127.0.0.1:{port}/"
+    # The browser opens on the configured face; the gallery stays at "/" for switching.
+    face = CFG.get("face", "")
+    url = f"{root}faces/{face}/" if face and (HERE / "faces" / face / "index.html").exists() else root
+    return root, url
+
+
 if __name__ == "__main__":
     try:
         board_cards.refuse_under_static_root(CARDS_PATH, HERE)
@@ -339,10 +411,7 @@ if __name__ == "__main__":
         print(e, flush=True)
         sys.exit(1)
     mode = f"MOCK={MOCK}" if MOCK else f"bus: {BUS}"
-    root = f"http://127.0.0.1:{PORT}/"
-    # The browser opens on the configured face; the gallery stays at "/" for switching.
-    face = CFG.get("face", "")
-    url = f"{root}faces/{face}/" if face and (HERE / "faces" / face / "index.html").exists() else root
+    root, url = _urls(PORT)
     # ALREADY RUNNING IS NOT AN ERROR, and treating it as one was the whole
     # bug. Closing the browser tab does not stop this server; it keeps going
     # headless. Relaunching then failed to bind, died before the line that
@@ -374,6 +443,9 @@ if __name__ == "__main__":
               "ai-visualizer.json.", flush=True)
         sys.exit(1)
     srv.allow_reuse_address = True
+    # --port 0 means "any free port": only the bound socket knows which one,
+    # so the address we print and open must come from there, not from PORT.
+    root, url = _urls(srv.server_address[1])
     print(f"ai-visualizer on {root}  opening {url}  ({mode})  Ctrl-C stops", flush=True)
     if not NO_OPEN:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
