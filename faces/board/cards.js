@@ -52,29 +52,68 @@
     return new Intl.DateTimeFormat("en-GB", opts).format(d);
   }
 
-  function localYMD(d) {
-    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  // Calendar order mirrors gws_cards.py _item_sort_key: (start in the CARD's
+  // zone, all-day first on a tie). Python compares those aware datetimes as
+  // local wall-clock times (same tzinfo), and an all-day item starts at local
+  // midnight of startDate. So the key here is the wall-clock "YYYY-MM-DDTHH:MM:SS.mmm"
+  // in card.timezone; never the browser's own zone.
+  const zoneFormatters = {};
+
+  function zoneFormatter(tz) {
+    const zone = tz ? String(tz) : "UTC";
+    if (!zoneFormatters[zone]) {
+      const opts = {
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+      };
+      try {
+        zoneFormatters[zone] = new Intl.DateTimeFormat("en-CA", Object.assign({ timeZone: zone }, opts));
+      } catch (err) {
+        // Missing or unknown zone (RangeError): fall back to UTC, never throw.
+        zoneFormatters[zone] = zone === "UTC"
+          ? null
+          : zoneFormatter("UTC");
+      }
+    }
+    return zoneFormatters[zone];
   }
 
-  function eventDay(item) {
-    if (item.allDay) return item.startDate || "";
+  function wallClockKey(d, tz) {
+    const fmt = zoneFormatter(tz);
+    if (!fmt) return d.toISOString().slice(0, 23);
+    const p = {};
+    const parts = fmt.formatToParts(d);
+    for (let i = 0; i < parts.length; i++) p[parts[i].type] = parts[i].value;
+    return p.year + "-" + pad2(p.month) + "-" + pad2(p.day) + "T" +
+      pad2(p.hour === "24" ? "00" : p.hour) + ":" + pad2(p.minute) + ":" + pad2(p.second) +
+      "." + String(d.getUTCMilliseconds()).padStart(3, "0");
+  }
+
+  function calendarSortKey(item, tz) {
+    if (!item) return "";
+    if (item.allDay) {
+      const s = String(item.startDate || "");
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s + "T00:00:00.000" : "";
+    }
     const d = new Date(item.start);
     if (Number.isNaN(d.getTime())) return "";
-    return localYMD(d);
+    return wallClockKey(d, tz);
   }
 
-  function sortCalendarItems(items) {
-    return items.slice().sort(function (a, b) {
-      const da = eventDay(a), db = eventDay(b);
-      if (da < db) return -1;
-      if (da > db) return 1;
+  // tz is the card's own zone (card.timezone), optional; missing/invalid -> UTC.
+  // Array.prototype.sort is stable, so exact ties keep input order (like sorted()).
+  function sortCalendarItems(items, tz) {
+    const keyed = (Array.isArray(items) ? items : []).map(function (item) {
+      return { item: item, key: calendarSortKey(item, tz), allDay: !!(item && item.allDay) };
+    });
+    keyed.sort(function (a, b) {
+      if (a.key < b.key) return -1;
+      if (a.key > b.key) return 1;
       if (a.allDay && !b.allDay) return -1;
       if (!a.allDay && b.allDay) return 1;
-      if (!a.allDay && !b.allDay) {
-        return new Date(a.start) - new Date(b.start);
-      }
       return 0;
     });
+    return keyed.map(function (k) { return k.item; });
   }
 
   function ymdToUTC(s) {
@@ -128,7 +167,7 @@
     }
     const items = Array.isArray(card.items) ? card.items : [];
     const limit = card.id === "calendar" ? CAL_LIMIT : TODO_LIMIT;
-    const ordered = card.id === "calendar" ? sortCalendarItems(items) : items.slice();
+    const ordered = card.id === "calendar" ? sortCalendarItems(items, card.timezone) : items.slice();
     const total = Math.max(Number(card.totalCount) || 0, ordered.length);
     const shown = ordered.slice(0, limit).map(function (it) {
       return presentItem(card.id, it, opts.timeZone);

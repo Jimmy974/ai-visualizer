@@ -117,8 +117,8 @@ def is_under_static_root(path, static_root=None):
 def refuse_under_static_root(path, static_root=None):
     if is_under_static_root(path, static_root):
         raise StaticRootError(
-            "cards file %s resolves under the static root; refusing to use "
-            "a path that could be served as a static file" % path
+            f"cards file {path} resolves under the static root; refusing to use "
+            "a path that could be served as a static file"
         )
 
 
@@ -127,15 +127,15 @@ def parse_rfc3339(value):
         raise ValidationError("timestamp must be a string")
     match = _RFC3339_RE.fullmatch(value)
     if not match:
-        raise ValidationError("malformed RFC 3339 timestamp: %r" % value)
+        raise ValidationError(f"malformed RFC 3339 timestamp: {value!r}")
     year, month, day, hour, minute, second, frac, off = match.groups()
     try:
         date = datetime.date(int(year), int(month), int(day))
     except ValueError:
-        raise ValidationError("invalid calendar date in timestamp: %r" % value)
+        raise ValidationError(f"invalid calendar date in timestamp: {value!r}")
     hour, minute, second = int(hour), int(minute), int(second)
     if not (0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59):
-        raise ValidationError("invalid clock time in timestamp: %r" % value)
+        raise ValidationError(f"invalid clock time in timestamp: {value!r}")
     micro = 0
     if frac:
         micro = int(frac[:6].ljust(6, "0"))
@@ -145,7 +145,7 @@ def parse_rfc3339(value):
         sign = 1 if off[0] == "+" else -1
         off_h, off_m = int(off[1:3]), int(off[4:6])
         if not (0 <= off_h <= 23 and 0 <= off_m <= 59):
-            raise ValidationError("invalid UTC offset: %r" % off)
+            raise ValidationError(f"invalid UTC offset: {off!r}")
         tz = datetime.timezone(
             sign * datetime.timedelta(hours=off_h, minutes=off_m)
         )
@@ -160,12 +160,12 @@ def _as_utc(value):
 
 def parse_calendar_date(value, field="date"):
     if not isinstance(value, str) or not _DATE_RE.fullmatch(value):
-        raise ValidationError("%s must be YYYY-MM-DD" % field)
+        raise ValidationError(f"{field} must be YYYY-MM-DD")
     try:
         return datetime.date(int(value[0:4]), int(value[5:7]), int(value[8:10]))
     except ValueError:
         raise ValidationError(
-            "%s is not a real Gregorian date: %r" % (field, value)
+            f"{field} is not a real Gregorian date: {value!r}"
         )
 
 
@@ -419,7 +419,7 @@ def merge_update(snapshot, update):
     if existing is not None:
         if _as_utc(update["attemptedAt"]) < _as_utc(existing["attemptedAt"]):
             raise StaleUpdateError(
-                "update is older than the stored attemptedAt for %s" % update["id"]
+                f"update is older than the stored attemptedAt for {update['id']}"
             )
     merged = dict(update)
     if update["status"] in ("loading", "error") and existing is not None:
@@ -504,8 +504,8 @@ def writer_lock(path):
                 raise
             if time.monotonic() >= deadline:
                 raise LockTimeout(
-                    "timed out after %ss waiting for %s; if no writer is "
-                    "running, remove the stale lock file" % (LOCK_TIMEOUT_S, lock_path)
+                    f"timed out after {LOCK_TIMEOUT_S}s waiting for {lock_path}; if no writer is "
+                    "running, remove the stale lock file"
                 )
             time.sleep(0.05)
     try:
@@ -594,7 +594,7 @@ def main(argv=None):
             try:
                 payload = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, ValueError) as exc:
-                print("invalid JSON: %s" % exc, file=sys.stderr)
+                print(f"invalid JSON: {exc}", file=sys.stderr)
                 return 1
             publish_update(path, payload, HERE)
         else:
