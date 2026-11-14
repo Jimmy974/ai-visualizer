@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# ai-visualizer: give your AI agent a face.
+# Copyright (C) 2026 Jared Rhodenizer
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Tests for gws → board-card normalization (verified Sinner gws shapes).
 import json
 import subprocess
@@ -252,6 +256,58 @@ class TestGwsCalendar(unittest.TestCase):
         self.assertEqual(explicit, {"start": "2026-03-29", "end": "2026-03-30"})
         self.assertFalse(hasattr(gws_cards, "calendar_window"))
 
+    def test_fallback_publishes_only_events_inside_30_day_window(self):
+        def timed(eid, day):
+            return {
+                "id": eid,
+                "title": eid,
+                "allDay": False,
+                "start": f"{day}T10:00:00+01:00",
+                "end": f"{day}T11:00:00+01:00",
+            }
+
+        def all_day(eid, start, end):
+            return {
+                "id": eid,
+                "title": eid,
+                "allDay": True,
+                "startDate": start,
+                "endDate": end,
+            }
+
+        now = board_cards.parse_rfc3339("2026-09-10T08:00:00+01:00")
+
+        def scope(*items):
+            return gws_cards.select_calendar_scope(
+                list(items),
+                timezone="Europe/London",
+                now=now,
+                today="2026-09-10",
+            )
+
+        window = {"start": "2026-09-10", "end": "2026-10-10"}
+        # 75 days out: nothing overlaps today..today+30, so no items.
+        far_items, far_rng = scope(timed("far", "2026-11-24"))
+        self.assertEqual(far_items, [])
+        self.assertEqual(far_rng["start"], "2026-09-10")
+        # 10 days out still shows, labelled with the 30-day window.
+        near_items, near_rng = scope(timed("near", "2026-09-20"))
+        self.assertEqual([i["id"] for i in near_items], ["near"])
+        self.assertEqual(near_rng, window)
+        # A far event must not hide a near one, whatever the input order.
+        both, both_rng = scope(timed("far", "2026-11-24"), timed("near", "2026-09-20"))
+        self.assertEqual([i["id"] for i in both], ["near"])
+        self.assertEqual(both_rng, window)
+        # The window end is exclusive: 2026-10-09 is in, 2026-10-10 is out.
+        last_in, _ = scope(timed("in", "2026-10-09"))
+        self.assertEqual([i["id"] for i in last_in], ["in"])
+        first_out, _ = scope(timed("out", "2026-10-10"))
+        self.assertEqual(first_out, [])
+        day_in, _ = scope(all_day("din", "2026-10-09", "2026-10-10"))
+        self.assertEqual([i["id"] for i in day_in], ["din"])
+        day_out, _ = scope(all_day("dout", "2026-10-10", "2026-10-11"))
+        self.assertEqual(day_out, [])
+
     def test_sort_uses_parsed_instants_not_raw_strings(self):
         earlier_london = {
             "id": "plus-one",
@@ -460,6 +516,78 @@ class TestLoadingErrorAndCli(unittest.TestCase):
         card = json.loads(proc.stdout)
         self.assertEqual([i["id"] for i in card["items"]], ["dup"])
         self.assertEqual(card["totalCount"], 1)
+
+    def test_auto_scope_cli_far_event_is_not_published(self):
+        def event(eid, day):
+            return {
+                "id": eid,
+                "status": "confirmed",
+                "summary": eid,
+                "start": {"dateTime": f"{day}T10:00:00+00:00"},
+                "end": {"dateTime": f"{day}T11:00:00+00:00"},
+            }
+
+        def scope(eid, day):
+            proc = _run(
+                "events",
+                "--timezone", "Europe/London",
+                "--auto-scope",
+                "--now", "2026-03-01T09:00:00Z",
+                "--today", "2026-03-01",
+                "--attempted-at", AT,
+                stdin=json.dumps({"items": [event(eid, day)]}),
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return json.loads(proc.stdout)
+
+        far = scope("far", "2026-05-15")
+        self.assertEqual(far["items"], [])
+        self.assertEqual(far["totalCount"], 0)
+        near = scope("near", "2026-03-11")
+        self.assertEqual([i["id"] for i in near["items"]], ["near"])
+        self.assertEqual(near["range"], {"start": "2026-03-01", "end": "2026-03-31"})
+
+    def test_unknown_timezone_is_rejected_not_utc(self):
+        with self.assertRaises(ValueError) as ctx:
+            gws_cards._tzinfo("Not/AZone")
+        self.assertIn("Not/AZone", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            gws_cards.validate_range_and_timezone(
+                "2026-09-10", "2026-09-11", "Not/AZone"
+            )
+        self.assertEqual(str(gws_cards._tzinfo("Europe/London")), "Europe/London")
+
+    def test_events_cli_rejects_unknown_timezone(self):
+        empty = json.dumps({"kind": "calendar#events", "items": []})
+        modes = {
+            "auto-scope": [
+                "--auto-scope",
+                "--now", "2026-03-01T09:00:00Z",
+                "--today", "2026-03-01",
+            ],
+            "auto-scope without --today": [
+                "--auto-scope", "--now", "2026-03-01T09:00:00Z",
+            ],
+            "explicit range": [
+                "--range-start", "2026-03-01", "--range-end", "2026-03-02",
+            ],
+        }
+        for label, extra in modes.items():
+            with self.subTest(mode=label):
+                bad = _run(
+                    "events", "--timezone", "Not/AZone",
+                    "--attempted-at", AT, *extra, stdin=empty,
+                )
+                self.assertNotEqual(bad.returncode, 0)
+                self.assertEqual(bad.stdout, "")
+                self.assertIn("Not/AZone", bad.stderr)
+                self.assertIn("timezone", bad.stderr)
+                good = _run(
+                    "events", "--timezone", "Europe/London",
+                    "--attempted-at", AT, *extra, stdin=empty,
+                )
+                self.assertEqual(good.returncode, 0, good.stderr)
+                self.assertEqual(json.loads(good.stdout)["timezone"], "Europe/London")
 
     def test_limits_imported_from_board_cards(self):
         self.assertEqual(gws_cards.MAX_ITEMS, board_cards.MAX_ITEMS)

@@ -5,6 +5,11 @@
  */
 
 #board-cards {
+  /* --hud-clear: px below the lowest HUD block (#brand, #statusblock).
+     cards.js measures it live; this fallback clears the status block at
+     common sizes when JS has not run yet. */
+  --hud-clear: calc(80px + 10vw);
+  --cards-top: max(108px, var(--hud-clear));
   position: fixed;
   inset: 0;
   z-index: 12;
@@ -13,7 +18,7 @@
   grid-template-columns: minmax(220px, 26vw) 1fr minmax(220px, 26vw);
   align-items: start;
   gap: 16px;
-  padding: 108px 48px 92px;
+  padding: var(--cards-top) 48px 92px;
   box-sizing: border-box;
   transition: opacity .7s;
 }
@@ -28,7 +33,7 @@ body.cine #board-cards {
   pointer-events: auto;
   cursor: default;
   grid-row: 1;
-  max-height: calc(100vh - 210px);
+  max-height: calc(100vh - var(--cards-top) - 102px);
   overflow: auto;
   overscroll-behavior: contain;
   padding: 14px 16px 16px;
@@ -115,9 +120,21 @@ body.cine #board-cards {
 }
 
 @media (max-width: 899px) {
+  /* The transcript line (#echo, index.html: bottom 76px) wraps upward. Cap it
+     at 3 lines of 14px and keep the cards region above that cap, so the two
+     never overlap however long the text is. 76 + 42 + 12 gap = 130.
+     Overflow hides the OLDEST lines: cards.js (watchTranscript) keeps the box
+     scrolled to its end, so the newest words and the cursor stay visible. */
+  #echo {
+    font-size: 10px;
+    line-height: 14px;
+    max-height: 42px;
+    overflow: hidden;
+  }
+
   #board-cards {
     top: 220px;
-    bottom: 80px;
+    bottom: 130px;
     left: 0;
     right: 0;
     z-index: 9;

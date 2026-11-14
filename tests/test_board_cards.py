@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-# Tests for board card storage, CLI, and GET /board-cards.
+# ai-visualizer: give your AI agent a face.
+# Copyright (C) 2026 Jared Rhodenizer
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Tests for board card storage, CLI, and GET /board-cards."""
 import errno
 import json
 import os
@@ -13,6 +30,7 @@ import unittest
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -366,6 +384,30 @@ class TestPublishMerge(CardsTemp):
             self.publish(TODO_READY)
         self.assertEqual(self.path.read_bytes(), corrupt)
 
+    def test_bool_version_is_rejected_on_publish(self):
+        # True == 1 in Python; JSON `true` must not pass as snapshot version 1.
+        before = self.path.read_bytes() if self.path.exists() else None
+        for bad in (True, False, 1.0, "1"):
+            payload = dict(TODO_READY, version=bad)
+            with self.subTest(version=bad):
+                with self.assertRaises(board_cards.ValidationError):
+                    self.publish(payload)
+                proc = _run_cli(
+                    ["--cards-file", str(self.path), "publish"],
+                    stdin=json.dumps(payload),
+                )
+                self.assertNotEqual(proc.returncode, 0)
+        after = self.path.read_bytes() if self.path.exists() else None
+        self.assertEqual(after, before)
+        self.publish(dict(TODO_READY, version=1))
+
+    def test_bool_version_in_stored_snapshot_is_corrupt(self):
+        self.path.write_text('{"version": true, "cards": []}')
+        corrupt = self.path.read_bytes()
+        with self.assertRaises(board_cards.CorruptStorageError):
+            self.publish(TODO_READY)
+        self.assertEqual(self.path.read_bytes(), corrupt)
+
     def test_per_card_merge_preserves_the_other_card(self):
         self.publish(TODO_READY)
         self.publish(CAL_READY)
@@ -673,7 +715,7 @@ class TestHttpEndpoint(unittest.TestCase):
         cls.path = Path(cls._td.name) / "cards.json"
         cls._prev = server.CARDS_PATH
         server.CARDS_PATH = cls.path
-        cls.httpd = __import__("http.server", fromlist=["ThreadingHTTPServer"]).ThreadingHTTPServer(
+        cls.httpd = ThreadingHTTPServer(
             ("127.0.0.1", 0), server.Handler
         )
         cls.port = cls.httpd.server_address[1]

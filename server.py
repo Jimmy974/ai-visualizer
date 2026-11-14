@@ -120,8 +120,11 @@ if "--port" in sys.argv:
 def _flag_value(flag):
     if flag in sys.argv:
         i = sys.argv.index(flag)
-        if i + 1 < len(sys.argv):
-            return sys.argv[i + 1]
+        if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
+            # Same contract as board_cards.py (argparse): a flag that needs a
+            # value must not be silently ignored.
+            sys.exit(f"server.py: error: argument {flag}: expected one argument")
+        return sys.argv[i + 1]
     return None
 
 

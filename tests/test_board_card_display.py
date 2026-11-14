@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
+# ai-visualizer: give your AI agent a face.
+# Copyright (C) 2026 Jared Rhodenizer
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Tests for board card display: cards.js view/poller logic and HTML seams.
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -14,7 +19,7 @@ CARDS_CSS = BOARD / "cards.css"
 INDEX = BOARD / "index.html"
 NODE = shutil.which("node")
 
-JS_HARNESS = r"""
+JS_PREAMBLE = r"""
 const fs = require("fs");
 const vm = require("vm");
 const path = process.argv[1];
@@ -49,6 +54,9 @@ function test(name, fn) {
     .catch((err) => results.push({name, ok: false, error: String(err && err.stack || err)}));
 }
 
+"""
+
+JS_HARNESS = JS_PREAMBLE + r"""
 const sevenTasks = [];
 for (let i = 1; i <= 7; i++) sevenTasks.push({id: "t"+i, title: "Task "+i, dueDate: "2026-03-29"});
 sevenTasks[0].title = "<b>html</b>";
@@ -243,6 +251,17 @@ Promise.resolve()
     assert(scheduled.length === 1, "re-armed after return");
   });
 }))
+.then(() => test("hud clearance takes lowest visible HUD bottom plus gap", () => {
+  assert(typeof BC.hudClearance === "function", "hudClearance exported");
+  const brand = {bottom: 80, width: 300, height: 46};
+  const status = {bottom: 160.4, width: 200, height: 126};
+  assert(BC.hudClearance([brand, status]) === 177, "default 16px gap, ceil");
+  assert(BC.hudClearance([brand, status], 0) === 161, "custom gap");
+  assert(BC.hudClearance([status, brand], 10) === 171, "order independent");
+  assert(BC.hudClearance([{bottom: 500, width: 0, height: 0}, brand], 0) === 80, "hidden ignored");
+  assert(BC.hudClearance([], 16) === 0, "nothing measured -> 0 (keep CSS fallback)");
+  assert(BC.hudClearance(null) === 0, "null safe");
+}))
 .then(() => {
   const failed = results.filter((r) => !r.ok);
   if (failed.length) {
@@ -290,15 +309,135 @@ class TestBoardMarkup(unittest.TestCase):
         self.assertIn("overflow", css)
         media = css.split("@media")[-1]
         self.assertIn("max-width", media)
-        match = __import__("re").search(r"top\s*:\s*(\d+)px", media)
+        match = re.search(r"top\s*:\s*(\d+)px", media)
         self.assertIsNotNone(match)
         self.assertGreaterEqual(int(match.group(1)), 200)
         self.assertNotIn("inset: 0", media)
         self.assertNotIn("inset:0", media)
 
 
+    def test_narrow_layout_keeps_transcript_line_clear_of_cards(self):
+        css = CARDS_CSS.read_text()
+        media = css.split("@media")[-1]
+        # The transcript line is capped, so a fixed offset can clear it.
+        echo = re.search(r"#echo\s*\{([^}]*)\}", media)
+        self.assertIsNotNone(echo, "narrow layout must bound #echo")
+        cap = re.search(r"max-height\s*:\s*(\d+)px", echo.group(1))
+        self.assertIsNotNone(cap, "#echo needs a max-height in the narrow layout")
+        self.assertRegex(echo.group(1), r"overflow\s*:\s*hidden")
+        base = re.search(r"#echo\{[^}]*?bottom\s*:\s*(\d+)px", INDEX.read_text())
+        self.assertIsNotNone(base, "index.html #echo bottom offset not found")
+        region = re.search(r"#board-cards\s*\{([^}]*)\}", media)
+        self.assertIsNotNone(region)
+        bottom = re.search(r"bottom\s*:\s*(\d+)px", region.group(1))
+        self.assertIsNotNone(bottom)
+        # Cards region must end above the top edge of a full-height #echo.
+        self.assertGreaterEqual(
+            int(bottom.group(1)), int(base.group(1)) + int(cap.group(1)))
+        # Cards still get room: stays below the HUD (top >= 200) without inset: 0.
+        top = re.search(r"top\s*:\s*(\d+)px", region.group(1))
+        self.assertIsNotNone(top)
+        self.assertGreaterEqual(int(top.group(1)), 200)
+
+
+    def test_wide_layout_clears_hud_via_measured_variable(self):
+        css = CARDS_CSS.read_text()
+        wide = css.split("@media")[0]
+        block = wide[wide.find("#board-cards {"):]
+        block = block[:block.find("}")]
+        # Top offset comes from the measured HUD bottom, never a fixed 108px.
+        self.assertIn("--hud-clear:", block)
+        self.assertIn("--cards-top: max(108px, var(--hud-clear))", block)
+        self.assertRegex(block, r"padding:\s*var\(--cards-top\)")
+        self.assertNotIn("padding: 108px", block)
+        # Panels shrink with the offset so they stay above the bottom bar.
+        self.assertIn("max-height: calc(100vh - var(--cards-top)", wide)
+        js = CARDS_JS.read_text()
+        self.assertIn('setProperty("--hud-clear"', js)
+        self.assertIn("ResizeObserver", js)
+        self.assertIn('addEventListener("resize"', js)
+        for sel in ("#brand", "#statusblock"):
+            self.assertIn('"%s"' % sel, js)
+
+
 @unittest.skipUnless(NODE, "node is required to execute cards.js tests")
 class TestCardsJs(unittest.TestCase):
+    def test_all_day_multi_day_shows_start_and_last_day(self):
+        script = JS_PREAMBLE + r"""
+// One panel per item: the calendar panel shows at most CAL_LIMIT rows.
+const meta = (item) => BC.panelView({
+  id:"calendar", status:"ready", attemptedAt:"2026-03-29T12:00:00Z",
+  updatedAt:"2026-03-29T12:00:00Z", totalCount:1,
+  timezone:"Europe/London", range:{start:"2026-03-29", end:"2026-04-02"}, items:[item],
+}, {timeZone:"Europe/London"}).items[0].meta;
+const day = (id, s, e) => ({id, title:id, allDay:true, startDate:s, endDate:e});
+console.log(JSON.stringify({
+  multi: meta(day("multi", "2026-03-29", "2026-04-01")),
+  single: meta(day("single", "2026-03-29", "2026-03-30")),
+  month: meta(day("month", "2026-02-27", "2026-03-02")),
+  noend: meta(day("noend", "2026-03-29", undefined)),
+  badend: meta(day("badend", "2026-03-29", "soon")),
+}));
+"""
+        proc = subprocess.run(
+            [NODE, "-e", script, str(CARDS_JS)],
+            cwd=str(REPO), capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        by_title = json.loads(proc.stdout)
+        # endDate is exclusive: 04-01 means the event ends on 03-31.
+        self.assertIn("All day", by_title["multi"])
+        self.assertIn("2026-03-29", by_title["multi"])
+        self.assertIn("2026-03-31", by_title["multi"])
+        self.assertNotIn("2026-04-01", by_title["multi"])
+        # A one-day event (endDate = startDate + 1) still shows exactly one date.
+        self.assertIn("All day", by_title["single"])
+        self.assertEqual(re.findall(r"\d{4}-\d{2}-\d{2}", by_title["single"]), ["2026-03-29"])
+        # Last day crosses a month boundary correctly (02-27 .. 03-02 exclusive).
+        self.assertIn("2026-03-01", by_title["month"])
+        self.assertNotIn("2026-03-02", by_title["month"])
+        # Missing or malformed endDate falls back to the start date alone.
+        for key in ("noend", "badend"):
+            self.assertIn("All day", by_title[key])
+            self.assertEqual(re.findall(r"\d{4}-\d{2}-\d{2}", by_title[key]), ["2026-03-29"])
+
+    def test_transcript_pins_to_newest_text(self):
+        script = JS_PREAMBLE + r"""
+// Fake #echo: scrollHeight grows as lines are added; pinToEnd must follow it.
+const el = {scrollHeight: 42, scrollTop: 0};
+let notify = null;
+let observed = null;
+function FakeObserver(cb) { notify = cb; this.observe = (t, o) => { observed = {t, o}; }; }
+BC.watchTranscript(el, FakeObserver);
+const out = {};
+out.initial = el.scrollTop;
+out.observesEcho = observed && observed.t === el;
+out.watchesText = !!(observed && observed.o.childList && observed.o.characterData && observed.o.subtree);
+el.scrollHeight = 98;          // 7 lines of 14px
+notify();
+out.afterGrow = el.scrollTop;
+el.scrollHeight = 70;          // text shrank to 5 lines
+notify();
+out.afterShrink = el.scrollTop;
+BC.watchTranscript(null, FakeObserver);   // #echo missing: no-op, no throw
+BC.pinToEnd(null);
+BC.pinToEnd({});
+console.log(JSON.stringify(out));
+"""
+        proc = subprocess.run(
+            [NODE, "-e", script, str(CARDS_JS)],
+            cwd=str(REPO), capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["initial"], 42)
+        self.assertTrue(out["observesEcho"])
+        self.assertTrue(out["watchesText"])
+        self.assertEqual(out["afterGrow"], 98)     # scrolled to the end: newest lines visible
+        self.assertEqual(out["afterShrink"], 70)
+        # init wires it to the real #echo.
+        self.assertIn('watchTranscript(document.getElementById("echo"))', CARDS_JS.read_text())
+
     def test_cards_js_logic(self):
         self.assertTrue(CARDS_JS.is_file(), "cards.js missing")
         proc = subprocess.run(
